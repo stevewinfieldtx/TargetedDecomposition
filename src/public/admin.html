@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDE — Targeted Decomposition Engine</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#08090d;--card:#0f1118;--hover:#161924;--input:#0a0c12;--border:#1a1d2e;--border2:#252840;--green:#22c55e;--blue:#3b82f6;--amber:#f59e0b;--red:#ef4444;--purple:#a855f7;--cyan:#06b6d4;--text:#e2e4f0;--muted:#8b8fa8;--dim:#454766;--r:10px;--rs:6px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+.mono{font-family:'JetBrains Mono',monospace}
+.shell{display:flex;min-height:100vh}
+
+/* Sidebar */
+.sidebar{width:256px;flex-shrink:0;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:0}
+.brand{padding:20px 20px 16px;border-bottom:1px solid var(--border)}
+.brand h1{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;letter-spacing:-.2px}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(34,197,94,.5);animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.brand .sub{font-size:11px;color:var(--dim);font-family:'JetBrains Mono',monospace;margin-top:3px}
+.nav-grp{padding:12px 10px 4px}
+.nav-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;color:var(--dim);padding:0 8px 6px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--rs);color:var(--muted);cursor:pointer;font-size:13px;font-weight:500;transition:all .12s}
+.nav-item:hover{background:var(--hover);color:var(--text)}
+.nav-item.active{background:rgba(59,130,246,.12);color:var(--blue)}
+.nav-item .ico{font-size:15px;width:18px;text-align:center}
+.badge{margin-left:auto;font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--hover);padding:2px 6px;border-radius:99px;color:var(--dim)}
+
+/* Main */
+.main{flex:1;padding:28px 32px;overflow-y:auto;max-height:100vh}
+.ph{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.ph h2{font-size:20px;font-weight:700;letter-spacing:-.3px}
+.ph .sub{color:var(--muted);font-size:12px;margin-top:3px}
+.ha{display:flex;gap:8px;align-items:center}
+
+/* Cards */
+.grid4{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;transition:border-color .2s}
+.kpi:hover{border-color:var(--border2)}
+.kpi .lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin-bottom:7px}
+.kpi .val{font-size:26px;font-weight:700;font-family:'JetBrains Mono',monospace;letter-spacing:-1px}
+.kpi .sub{font-size:11px;color:var(--muted);margin-top:3px}
+.kpi.green .val{color:var(--green)}.kpi.blue .val{color:var(--blue)}.kpi.amber .val{color:var(--amber)}.kpi.purple .val{color:var(--purple)}.kpi.cyan .val{color:var(--cyan)}
+
+/* Panel */
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:18px}
+.panel-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.panel-hdr h3{font-size:13px;font-weight:700}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:9px 18px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);border-bottom:1px solid var(--border);background:rgba(0,0,0,.2)}
+td{padding:11px 18px;font-size:12px;border-bottom:1px solid var(--border);color:var(--muted)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--hover)}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--rs);font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;border:1px solid var(--border);background:var(--card);color:var(--text);transition:all .12s}
+.btn:hover{background:var(--hover);border-color:var(--border2)}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.primary:hover{background:#2563eb}
+.btn.green{background:var(--green);border-color:var(--green);color:#000}.btn.green:hover{opacity:.9}
+.btn.sm{padding:4px 9px;font-size:11px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Inputs */
+.ig{margin-bottom:13px}
+.ig label{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin-bottom:5px}
+input[type=text],input[type=url],input[type=password],select,textarea{width:100%;padding:9px 12px;background:var(--input);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;transition:border-color .12s;resize:vertical}
+input:focus,select:focus,textarea:focus{border-color:var(--blue)}
+textarea{min-height:80px}
+
+/* Log */
+.log{background:var(--input);border:1px solid var(--border);border-radius:var(--rs);padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);max-height:280px;overflow-y:auto;line-height:1.9;white-space:pre-wrap}
+.ok{color:var(--green)}.err{color:var(--red)}.info{color:var(--blue)}.warn{color:var(--amber)}
+
+/* Grid */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
+/* Tags */
+.tag{display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:600;font-family:'JetBrains Mono',monospace}
+.tag.green{background:rgba(34,197,94,.12);color:var(--green)}
+.tag.blue{background:rgba(59,130,246,.12);color:var(--blue)}
+.tag.amber{background:rgba(245,158,11,.12);color:var(--amber)}
+.tag.red{background:rgba(239,68,68,.12);color:var(--red)}
+.tag.purple{background:rgba(168,85,247,.12);color:var(--purple)}
+.tag.cyan{background:rgba(6,182,212,.12);color:var(--cyan)}
+
+/* Status dot */
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+.dot.on{background:var(--green);box-shadow:0 0 5px rgba(34,197,94,.4)}
+.dot.off{background:var(--red)}.dot.warn{background:var(--amber)}
+
+/* Modal */
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:26px;width:520px;max-width:92vw;max-height:85vh;overflow-y:auto}
+.modal h3{font-size:15px;font-weight:700;margin-bottom:18px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+
+/* Toast */
+.toasts{position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:7px}
+.toast{padding:10px 18px;border-radius:var(--rs);font-size:12px;font-weight:500;animation:slideIn .25s ease;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+.toast.success{background:var(--green);color:#000}.toast.error{background:var(--red);color:#fff}.toast.info{background:var(--blue);color:#fff}
+@keyframes slideIn{from{transform:translateX(80px);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* Drop zone */
+.dropzone{border:2px dashed var(--border);border-radius:var(--r);padding:32px;text-align:center;cursor:pointer;transition:all .15s}
+.dropzone:hover,.dropzone.over{border-color:var(--blue);background:rgba(59,130,246,.05)}
+.dropzone .ico{font-size:32px;margin-bottom:10px}
+.dropzone p{color:var(--muted);font-size:13px}
+.dropzone .hint{font-size:11px;color:var(--dim);margin-top:4px}
+
+/* Progress bar */
+.pbar{height:3px;background:var(--border);border-radius:99px;overflow:hidden;margin:6px 0}
+.pbar-fill{height:100%;background:var(--blue);transition:width .3s ease;border-radius:99px}
+
+.spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;padding:40px;color:var(--dim)}
+.empty .ico{font-size:36px;margin-bottom:10px}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* Atom card */
+.atom-card{background:var(--input);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px}
+.atom-text{font-size:13px;color:var(--text);line-height:1.5;margin-bottom:8px}
+.atom-tags{display:flex;flex-wrap:wrap;gap:4px}
+
+@media(max-width:768px){.sidebar{display:none}.main{padding:16px}.g2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="shell" id="app"></div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+const API = window.location.origin;
+let KEY = localStorage.getItem('tde_key') || '';
+let view = 'overview';
+let state = {
+  health: null, collections: [], loading: true,
+  selectedCol: null, colDetail: null, colSources: [], colAtoms: [],
+  logs: [], searchResults: [], askResult: null,
+};
+
+// ── API ──────────────────────────────────────────────────────────────────────
+
+async function api(path, opts = {}) {
+  const h = { 'Content-Type': 'application/json' };
+  if (KEY) h['x-api-key'] = KEY;
+  const r = await fetch(`${API}${path}`, { ...opts, headers: { ...h, ...(opts.headers || {}) } });
+  if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t.slice(0, 200)}`); }
+  return r.json();
+}
+
+async function apiForm(path, formData) {
+  const h = {};
+  if (KEY) h['x-api-key'] = KEY;
+  const r = await fetch(`${API}${path}`, { method: 'POST', headers: h, body: formData });
+  if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t.slice(0, 200)}`); }
+  return r.json();
+}
+
+// ── Log / Toast ──────────────────────────────────────────────────────────────
+
+function log(msg, type = '') {
+  const ts = new Date().toLocaleTimeString();
+  state.logs.unshift({ ts, msg, type });
+  if (state.logs.length > 300) state.logs = state.logs.slice(0, 300);
+}
+
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Data Loading ─────────────────────────────────────────────────────────────
+
+async function loadAll() {
+  state.loading = true; render();
+  try {
+    const [health, collections] = await Promise.all([api('/health'), api('/collections').catch(() => [])]);
+    state.health = health; state.collections = collections;
+    log('Connected to TDE', 'ok');
+  } catch (err) { log(`Connection failed: ${err.message}`, 'err'); toast('Connection failed', 'error'); }
+  state.loading = false; render();
+}
+
+async function loadCollection(id) {
+  try {
+    const [detail, sources] = await Promise.all([api(`/collections/${id}`), api(`/sources/${id}`)]);
+    state.colDetail = detail; state.colSources = sources;
+    render();
+  } catch (err) { log(`Failed: ${err.message}`, 'err'); }
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────────
+
+async function createCollection(id, name, desc) {
+  try {
+    await api('/collections', { method: 'POST', body: JSON.stringify({ id, name, description: desc }) });
+    log(`Created: ${name}`, 'ok'); toast('Collection created!', 'success'); await loadAll();
+  } catch (e) { log(`Failed: ${e.message}`, 'err'); toast('Failed', 'error'); }
+}
+
+async function ingestURLs(collectionId, type, urlsText) {
+  const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u.length > 5);
+  if (!urls.length) { toast('No URLs found', 'error'); return; }
+  if (urls.length === 1) {
+    log(`Ingesting ${type}: ${urls[0].slice(0, 60)}...`, 'info');
+    toast(`Ingesting 1 ${type} URL...`, 'info');
+    try {
+      await api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId, type, input: urls[0] }) });
+      log(`Queued: ${urls[0].slice(0, 60)}`, 'ok'); toast('Queued for ingestion!', 'success');
+    } catch (e) { log(`Error: ${e.message}`, 'err'); toast('Failed', 'error'); }
+  } else {
+    const items = urls.map(u => ({ type, input: u }));
+    log(`Batch ingesting ${items.length} ${type} URLs...`, 'info');
+    toast(`Queuing ${items.length} URLs...`, 'info');
+    try {
+      await api('/ingest/batch', { method: 'POST', body: JSON.stringify({ collectionId, items }) });
+      log(`Queued ${items.length} items`, 'ok'); toast(`${items.length} items queued!`, 'success');
+    } catch (e) { log(`Error: ${e.message}`, 'err'); toast('Failed', 'error'); }
+  }
+  closeModal();
+  setTimeout(() => { if (state.selectedCol === collectionId) loadCollection(collectionId); }, 3000);
+}
+
+async function ingestChannel(collectionId, channelUrl, maxVideos) {
+  log(`Channel ingest: ${channelUrl} (max ${maxVideos})...`, 'info');
+  toast('Channel ingest started!', 'info');
+  try {
+    await api('/ingest/channel', { method: 'POST', body: JSON.stringify({ collectionId, channelUrl, maxVideos: parseInt(maxVideos) || 50 }) });
+    log(`Channel queued: ${channelUrl}`, 'ok'); toast('Channel queued!', 'success');
+  } catch (e) { log(`Error: ${e.message}`, 'err'); toast('Failed', 'error'); }
+  closeModal();
+}
+
+async function uploadFiles(collectionId, files, context) {
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  if (context) fd.append('context', context);
+  log(`Uploading ${files.length} file(s)...`, 'info');
+  toast(`Uploading ${files.length} file(s)...`, 'info');
+  try {
+    await apiForm(`/upload/${collectionId}`, fd);
+    log(`${files.length} file(s) queued for processing`, 'ok'); toast('Upload complete!', 'success');
+  } catch (e) { log(`Upload error: ${e.message}`, 'err'); toast('Upload failed', 'error'); }
+  closeModal();
+  setTimeout(() => { if (state.selectedCol === collectionId) loadCollection(collectionId); }, 4000);
+}
+
+async function runSearch(collectionId, q, persona, stage) {
+  log(`Searching "${q}"...`, 'info');
+  try {
+    let url = `/search/${collectionId}?q=${encodeURIComponent(q)}&top_k=10`;
+    if (persona) url += `&persona=${encodeURIComponent(persona)}`;
+    if (stage)   url += `&buying_stage=${encodeURIComponent(stage)}`;
+    const r = await api(url);
+    state.searchResults = r.results || [];
+    log(`Found ${state.searchResults.length} atoms`, 'ok');
+    render();
+  } catch (e) { log(`Search failed: ${e.message}`, 'err'); }
+}
+
+async function runAsk(collectionId, question) {
+  log(`Asking: "${question}"`, 'info');
+  document.getElementById('ask-result')?.remove();
+  try {
+    const r = await api(`/ask/${collectionId}`, { method: 'POST', body: JSON.stringify({ question }) });
+    state.askResult = r;
+    log('Answer received', 'ok'); render();
+  } catch (e) { log(`Ask failed: ${e.message}`, 'err'); }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function render() {
+  document.getElementById('app').innerHTML = `
+    ${sidebar()}
+    <div class="main">
+      ${view === 'overview'    ? pageOverview()    : ''}
+      ${view === 'collections' ? pageCollections() : ''}
+      ${view === 'detail'      ? pageDetail()      : ''}
+      ${view === 'ingest'      ? pageIngest()      : ''}
+      ${view === 'search'      ? pageSearch()      : ''}
+      ${view === 'settings'    ? pageSettings()    : ''}
+      ${view === 'logs'        ? pageLogs()        : ''}
+    </div>`;
+  attachHandlers();
+}
+
+function sidebar() {
+  const h = state.health || {};
+  return `<div class="sidebar">
+    <div class="brand">
+      <h1><span class="pulse"></span> TDE</h1>
+      <div class="sub">Targeted Decomposition Engine</div>
+    </div>
+    <div class="nav-grp">
+      <div class="nav-lbl">Workspace</div>
+      ${nav('overview',    '◎', 'Overview')}
+      ${nav('collections', '◫', 'Collections', state.collections.length)}
+      ${nav('ingest',      '⬆', 'Ingest')}
+      ${nav('search',      '⌕', 'Search & Ask')}
+    </div>
+    <div class="nav-grp">
+      <div class="nav-lbl">System</div>
+      ${nav('settings', '⚙', 'Settings')}
+      ${nav('logs',     '▤', 'Activity Log', state.logs.length)}
+    </div>
+  </div>`;
+}
+
+function nav(v, ico, label, badge) {
+  return `<div class="nav-item ${view === v ? 'active' : ''}" onclick="go('${v}')">
+    <span class="ico">${ico}</span> ${label}
+    ${badge !== undefined ? `<span class="badge">${badge}</span>` : ''}
+  </div>`;
+}
+
+function pageOverview() {
+  const h = state.health || {};
+  const totalAtoms   = state.collections.reduce((s, c) => s + ((c.stats||{}).atomCount||0), 0);
+  const totalSources = state.collections.reduce((s, c) => s + ((c.stats||{}).sourceCount||0), 0);
+  return `
+  <div class="ph">
+    <div><h2>System Overview</h2><div class="sub">Targeted Decomposition Engine — Feed it anything.</div></div>
+    <div class="ha"><button class="btn" onclick="loadAll()">↻ Refresh</button></div>
+  </div>
+  <div class="grid4">
+    <div class="kpi green"><div class="lbl">Status</div><div class="val" style="font-size:18px">${h.status === 'ok' ? '● LIVE' : '○ DOWN'}</div><div class="sub">Port ${window.location.port || '443'}</div></div>
+    <div class="kpi blue"><div class="lbl">Collections</div><div class="val">${state.collections.length}</div><div class="sub">${totalSources} sources</div></div>
+    <div class="kpi purple"><div class="lbl">Total Atoms</div><div class="val">${totalAtoms.toLocaleString()}</div><div class="sub">Indexed & tagged</div></div>
+    <div class="kpi cyan"><div class="lbl">Vector Store</div><div class="val" style="font-size:16px">${h.qdrantConnected ? '● QDRANT' : '○ SQLite'}</div><div class="sub">${h.qdrantConnected ? 'Hybrid search' : 'Local fallback'}</div></div>
+  </div>
+  <div class="g2">
+    <div class="panel">
+      <div class="panel-hdr"><h3>Services</h3></div>
+      <table>
+        <tr><td><span class="dot ${h.hasOpenRouter?'on':'off'}"></span>OpenRouter (LLM)</td><td style="text-align:right"><span class="mono" style="font-size:11px">${h.hasOpenRouter?'Connected':'Missing'}</span></td></tr>
+        <tr><td><span class="dot ${h.hasYouTubeAPI?'on':'off'}"></span>YouTube API</td><td style="text-align:right"><span class="mono" style="font-size:11px">${h.hasYouTubeAPI?'Connected':'Missing'}</span></td></tr>
+        <tr><td><span class="dot ${h.hasGroq?'on':'off'}"></span>Groq Whisper</td><td style="text-align:right"><span class="mono" style="font-size:11px">${h.hasGroq?'Connected':'Missing'}</span></td></tr>
+        <tr><td><span class="dot ${h.qdrantConnected?'on':'off'}"></span>Qdrant Vectors</td><td style="text-align:right"><span class="mono" style="font-size:11px">${h.qdrantConnected?'Connected':'Offline'}</span></td></tr>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="panel-hdr"><h3>Supported Input Types</h3></div>
+      <table>
+        ${(h.supportedTypes||['youtube','pdf','docx','pptx','audio','text','web']).map(t => `<tr><td><span class="tag blue">${t}</span></td><td style="text-align:right;color:var(--dim);font-size:11px">${typeDesc(t)}</td></tr>`).join('')}
+      </table>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-hdr"><h3>Recent Activity</h3></div>
+    <div style="padding:14px 18px"><div class="log">${state.logs.slice(0,12).map(l=>`<div class="${l.type}"><span style="color:var(--dim)">[${l.ts}]</span> ${esc(l.msg)}</div>`).join('')||'<span style="color:var(--dim)">No activity yet</span>'}</div></div>
+  </div>`;
+}
+
+function typeDesc(t) {
+  const m = {youtube:'Videos + transcripts',pdf:'Documents',docx:'Word files',pptx:'Presentations',audio:'Podcasts / recordings',text:'Transcripts / raw text',web:'Web pages'};
+  return m[t] || '';
+}
+
+function pageCollections() {
+  return `
+  <div class="ph">
+    <div><h2>Collections</h2><div class="sub">Each collection is a knowledge corpus</div></div>
+    <div class="ha"><button class="btn primary" onclick="showNewColModal()">+ New Collection</button></div>
+  </div>
+  ${state.collections.length === 0
+    ? `<div class="empty"><div class="ico">◫</div><p>No collections yet. Create one to get started.</p></div>`
+    : `<div class="panel"><table>
+        <thead><tr><th>Name</th><th>ID</th><th>Sources</th><th>Atoms</th><th>Source Types</th><th></th></tr></thead>
+        <tbody>${state.collections.map(c => {
+          const st = c.stats || {};
+          const types = Object.entries(st.sourceTypes || {}).map(([t,n]) => `<span class="tag cyan">${t} ${n}</span>`).join(' ');
+          return `<tr style="cursor:pointer" onclick="viewCol('${c.id}')">
+            <td style="color:var(--text);font-weight:600">${esc(c.name)}</td>
+            <td><span class="mono" style="font-size:11px;color:var(--dim)">${c.id}</span></td>
+            <td>${st.sourceCount||0}</td>
+            <td style="color:var(--purple);font-weight:600">${(st.atomCount||0).toLocaleString()}</td>
+            <td>${types||'<span style="color:var(--dim)">—</span>'}</td>
+            <td><button class="btn sm" onclick="event.stopPropagation();showIngestModal('${c.id}')">+ Ingest</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`}`;
+}
+
+function pageDetail() {
+  const c = state.colDetail;
+  if (!c) return `<div class="empty"><div class="spinner"></div></div>`;
+  const s = c.stats || {};
+  const types = Object.entries(s.sourceTypes || {}).map(([t,n]) => `<span class="tag cyan">${t}: ${n}</span>`).join(' ');
+  return `
+  <div class="ph">
+    <div><h2>${esc(c.name)}</h2><div class="sub"><span class="mono">${c.id}</span></div></div>
+    <div class="ha">
+      <button class="btn" onclick="go('collections')">← Back</button>
+      <button class="btn primary" onclick="showIngestModal('${c.id}')">+ Ingest</button>
+    </div>
+  </div>
+  <div class="grid4">
+    <div class="kpi blue"><div class="lbl">Sources</div><div class="val">${s.sourceCount||0}</div><div class="sub">${types}</div></div>
+    <div class="kpi purple"><div class="lbl">Atoms</div><div class="val">${(s.atomCount||0).toLocaleString()}</div><div class="sub">Indexed</div></div>
+    <div class="kpi amber"><div class="lbl">Duration</div><div class="val">${s.totalDurationHours||0}h</div><div class="sub">Audio/video content</div></div>
+    <div class="kpi green"><div class="lbl">Vector Store</div><div class="val" style="font-size:14px">${s.vectorStore||'sqlite'}</div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-hdr"><h3>Sources</h3><span style="font-size:11px;color:var(--dim)">${state.colSources.length} total</span></div>
+    ${state.colSources.length === 0
+      ? `<div class="empty"><p>No sources yet. Use Ingest to add content.</p></div>`
+      : `<table><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Atoms</th><th>Duration/Pages</th></tr></thead>
+         <tbody>${state.colSources.map(src => {
+           const meta = src.metadata || {};
+           const dur = src.duration ? Math.round(src.duration/60) + 'm' : '';
+           const pages = src.page_count ? src.page_count + ' slides/pages' : '';
+           return `<tr>
+             <td style="color:var(--text)">${esc(src.title||src.id)}</td>
+             <td><span class="tag blue">${src.source_type||'unknown'}</span></td>
+             <td><span class="dot ${src.status==='ready'?'on':src.status==='error'?'off':'warn'}"></span>${src.status}</td>
+             <td style="color:var(--purple)">${meta.atomCount||'—'}</td>
+             <td style="color:var(--dim)">${dur||pages||'—'}</td>
+           </tr>`;
+         }).join('')}</tbody></table>`}
+  </div>`;
+}
+
+function pageIngest() {
+  return `
+  <div class="ph">
+    <div><h2>Ingest</h2><div class="sub">Feed the engine — any format, any source</div></div>
+  </div>
+  <div class="g2">
+    <!-- YouTube URLs -->
+    <div class="panel">
+      <div class="panel-hdr"><h3>📺 YouTube URLs</h3></div>
+      <div style="padding:18px">
+        <div class="ig"><label>Collection</label>${colSelect('yt-col')}</div>
+        <div class="ig"><label>YouTube URLs (one per line)</label><textarea id="yt-urls" placeholder="https://www.youtube.com/watch?v=...&#10;https://www.youtube.com/watch?v=...&#10;https://youtu.be/..." rows="5"></textarea></div>
+        <button class="btn primary" onclick="doYTIngest()">⬆ Ingest URLs</button>
+        <div style="margin-top:12px;font-size:11px;color:var(--dim)">Paste any number of YouTube URLs. Each will be transcribed and atomized.</div>
+      </div>
+    </div>
+    <!-- YouTube Channel -->
+    <div class="panel">
+      <div class="panel-hdr"><h3>📡 YouTube Channel</h3></div>
+      <div style="padding:18px">
+        <div class="ig"><label>Collection</label>${colSelect('ch-col')}</div>
+        <div class="ig"><label>Channel URL or @handle</label><input type="url" id="ch-url" placeholder="https://www.youtube.com/@channelname"></div>
+        <div class="ig"><label>Max Videos</label><input type="text" id="ch-max" value="50" style="width:80px"></div>
+        <button class="btn primary" onclick="doChannelIngest()">⬆ Ingest Channel</button>
+      </div>
+    </div>
+    <!-- File Upload -->
+    <div class="panel">
+      <div class="panel-hdr"><h3>📁 Upload Files</h3></div>
+      <div style="padding:18px">
+        <div class="ig"><label>Collection</label>${colSelect('file-col')}</div>
+        <div class="ig"><label>Context (optional)</label><input type="text" id="file-ctx" placeholder="e.g. B2B sales training webinar"></div>
+        <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+          <div class="ico">⬆</div>
+          <p>Drop files here or click to browse</p>
+          <div class="hint">PDF · DOCX · PPTX · MP3 · MP4 · WAV · TXT · MD</div>
+        </div>
+        <input type="file" id="file-input" multiple accept=".pdf,.docx,.doc,.pptx,.ppt,.mp3,.mp4,.m4a,.wav,.flac,.ogg,.webm,.txt,.md" style="display:none" onchange="handleFileSelect(this)">
+        <div id="file-list" style="margin-top:10px"></div>
+      </div>
+    </div>
+    <!-- Web URLs -->
+    <div class="panel">
+      <div class="panel-hdr"><h3>🌐 Web Pages</h3></div>
+      <div style="padding:18px">
+        <div class="ig"><label>Collection</label>${colSelect('web-col')}</div>
+        <div class="ig"><label>URLs (one per line)</label><textarea id="web-urls" placeholder="https://example.com/article&#10;https://blog.company.com/post" rows="4"></textarea></div>
+        <button class="btn primary" onclick="doWebIngest()">⬆ Ingest Pages</button>
+      </div>
+    </div>
+  </div>
+  <!-- Raw Text -->
+  <div class="panel">
+    <div class="panel-hdr"><h3>📝 Raw Text / Transcript</h3></div>
+    <div style="padding:18px">
+      <div class="g2">
+        <div>
+          <div class="ig"><label>Collection</label>${colSelect('txt-col')}</div>
+          <div class="ig"><label>Title</label><input type="text" id="txt-title" placeholder="e.g. Q3 Sales Call Transcript"></div>
+        </div>
+        <div>
+          <div class="ig"><label>Paste Text or Transcript</label><textarea id="txt-content" rows="6" placeholder="Paste any text, transcript, meeting notes, etc..."></textarea></div>
+        </div>
+      </div>
+      <button class="btn primary" onclick="doTextIngest()">⬆ Ingest Text</button>
+    </div>
+  </div>
+  <!-- Activity Log -->
+  <div class="panel">
+    <div class="panel-hdr"><h3>Activity Log</h3></div>
+    <div style="padding:14px 18px"><div class="log" id="ingest-log">${state.logs.slice(0,20).map(l=>`<div class="${l.type}"><span style="color:var(--dim)">[${l.ts}]</span> ${esc(l.msg)}</div>`).join('')||'<span style="color:var(--dim)">No activity yet</span>'}</div></div>
+  </div>`;
+}
+
+function pageSearch() {
+  return `
+  <div class="ph">
+    <div><h2>Search & Ask</h2><div class="sub">Query your atom library with optional 6D filters</div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-hdr"><h3>Search Atoms</h3></div>
+    <div style="padding:18px">
+      <div class="g2">
+        <div>
+          <div class="ig"><label>Collection</label>${colSelect('srch-col')}</div>
+          <div class="ig"><label>Query</label><input type="text" id="srch-q" placeholder="What do we know about ROI in healthcare?" onkeydown="if(event.key==='Enter')doSearch()"></div>
+        </div>
+        <div>
+          <div class="ig"><label>Filter: Persona</label><select id="srch-persona"><option value="">Any persona</option>${dims('persona').map(v=>`<option>${v}</option>`).join('')}</select></div>
+          <div class="ig"><label>Filter: Buying Stage</label><select id="srch-stage"><option value="">Any stage</option>${dims('buying_stage').map(v=>`<option>${v}</option>`).join('')}</select></div>
+        </div>
+      </div>
+      <button class="btn primary" onclick="doSearch()">Search</button>
+    </div>
+  </div>
+  ${state.searchResults.length > 0 ? `
+  <div class="panel">
+    <div class="panel-hdr"><h3>Results (${state.searchResults.length})</h3></div>
+    <div style="padding:14px 18px">
+      ${state.searchResults.map(r => `
+        <div class="atom-card">
+          <div class="atom-text">${esc(r.text)}</div>
+          <div class="atom-tags">
+            ${r.similarity ? `<span class="tag green">${r.similarity}%</span>` : ''}
+            ${r.atomType ? `<span class="tag blue">${r.atomType}</span>` : ''}
+            ${r.persona ? `<span class="tag amber">${r.persona}</span>` : ''}
+            ${r.buyingStage ? `<span class="tag purple">${r.buyingStage}</span>` : ''}
+            ${r.emotionalDriver ? `<span class="tag cyan">${r.emotionalDriver}</span>` : ''}
+            ${r.evidenceType ? `<span class="tag blue">${r.evidenceType}</span>` : ''}
+            ${r.credibility ? `<span class="tag amber">Cred: ${r.credibility}/5</span>` : ''}
+            ${r.recency ? `<span class="tag">${r.recency}</span>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>
+  </div>` : ''}
+  <div class="panel">
+    <div class="panel-hdr"><h3>Ask (RAG)</h3></div>
+    <div style="padding:18px">
+      <div class="ig"><label>Collection</label>${colSelect('ask-col')}</div>
+      <div class="ig"><label>Question</label><input type="text" id="ask-q" placeholder="What's the strongest ROI argument for a CFO?" onkeydown="if(event.key==='Enter')doAsk()"></div>
+      <button class="btn primary" onclick="doAsk()">Ask</button>
+      ${state.askResult ? `
+      <div style="margin-top:16px;padding:14px;background:var(--input);border:1px solid var(--border);border-radius:var(--rs)">
+        <div style="font-size:13px;line-height:1.7;color:var(--text)">${esc(state.askResult.answer)}</div>
+        ${state.askResult.atoms?.length ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:10px;color:var(--dim)">Based on ${state.askResult.atoms.length} atoms</div>` : ''}
+      </div>` : ''}
+    </div>
+  </div>`;
+}
+
+function pageSettings() {
+  const h = state.health || {};
+  return `
+  <div class="ph"><div><h2>Settings</h2><div class="sub">API connection and environment status</div></div></div>
+  <div class="panel">
+    <div class="panel-hdr"><h3>API Key</h3></div>
+    <div style="padding:18px">
+      <div class="ig"><label>x-api-key</label>
+        <div style="display:flex;gap:8px">
+          <input type="password" id="key-inp" value="${esc(KEY)}" placeholder="Enter API_SECRET_KEY">
+          <button class="btn" onclick="saveKey()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-hdr"><h3>Environment</h3></div>
+    <table>
+      <tr><td><span class="mono">OPENROUTER_API_KEY</span></td><td><span class="dot ${h.hasOpenRouter?'on':'off'}"></span>${h.hasOpenRouter?'Set':'Missing'}</td></tr>
+      <tr><td><span class="mono">YOUTUBE_API_KEY</span></td><td><span class="dot ${h.hasYouTubeAPI?'on':'off'}"></span>${h.hasYouTubeAPI?'Set':'Missing'}</td></tr>
+      <tr><td><span class="mono">GROQ_API_KEY</span></td><td><span class="dot ${h.hasGroq?'on':'off'}"></span>${h.hasGroq?'Set':'Missing'}</td></tr>
+      <tr><td><span class="mono">QDRANT_URL</span></td><td><span class="dot ${h.qdrantConnected?'on':'off'}"></span>${h.qdrantConnected?'Connected':'Not set'}</td></tr>
+      <tr><td><span class="mono">DATABASE_URL</span></td><td><span class="dot ${h.qdrantConnected?'on':'warn'}"></span>Check Railway</td></tr>
+    </table>
+  </div>`;
+}
+
+function pageLogs() {
+  return `
+  <div class="ph">
+    <div><h2>Activity Log</h2><div class="sub">${state.logs.length} entries</div></div>
+    <div class="ha"><button class="btn sm" onclick="state.logs=[];render()">Clear</button></div>
+  </div>
+  <div class="panel"><div style="padding:14px 18px">
+    <div class="log" style="max-height:600px">
+      ${state.logs.map(l=>`<div class="${l.type}"><span style="color:var(--dim)">[${l.ts}]</span> ${esc(l.msg)}</div>`).join('')||'<span style="color:var(--dim)">No activity</span>'}
+    </div>
+  </div></div>`;
+}
+
+// ── Modals ───────────────────────────────────────────────────────────────────
+
+function showNewColModal() {
+  const m = modal(`New Collection`,`
+    <div class="ig"><label>ID (url-safe, no spaces)</label><input type="text" id="nc-id" placeholder="e.g. sales-playbook-2025"></div>
+    <div class="ig"><label>Name</label><input type="text" id="nc-name" placeholder="e.g. Sales Playbook 2025"></div>
+    <div class="ig"><label>Description (optional)</label><input type="text" id="nc-desc" placeholder="What is this collection for?"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitNewCol()">Create</button>
+    </div>`);
+}
+
+function showIngestModal(colId) {
+  const m = modal(`Ingest into "${colId}"`,`
+    <div style="margin-bottom:14px;font-size:12px;color:var(--muted)">Tip: use the full <b>Ingest</b> page for bulk operations and file uploads.</div>
+    <div class="ig"><label>Type</label>
+      <select id="qi-type">
+        <option value="youtube">YouTube Video URL</option>
+        <option value="web">Web Page URL</option>
+        <option value="text">Raw Text / Transcript</option>
+      </select>
+    </div>
+    <div class="ig"><label>URL / Text</label><textarea id="qi-input" rows="3" placeholder="Paste URL or text..."></textarea></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitQuickIngest('${colId}')">Ingest</button>
+    </div>`);
+}
+
+function modal(title, body) {
+  closeModal();
+  const el = document.createElement('div');
+  el.className = 'backdrop'; el.id = 'modal';
+  el.innerHTML = `<div class="modal"><h3>${title}</h3>${body}</div>`;
+  document.body.appendChild(el);
+}
+
+function closeModal() { document.getElementById('modal')?.remove(); }
+
+// ── Event Handlers ────────────────────────────────────────────────────────────
+
+function attachHandlers() {
+  const dz = document.getElementById('dropzone');
+  if (dz) {
+    dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+    dz.addEventListener('drop', e => {
+      e.preventDefault(); dz.classList.remove('over');
+      handleFiles(Array.from(e.dataTransfer.files));
+    });
+  }
+}
+
+let selectedFiles = [];
+function handleFileSelect(input) { handleFiles(Array.from(input.files)); }
+function handleFiles(files) {
+  selectedFiles = files;
+  const list = document.getElementById('file-list');
+  if (list) {
+    list.innerHTML = files.map(f => `<div style="font-size:11px;color:var(--muted);padding:3px 0">📄 ${esc(f.name)} <span style="color:var(--dim)">(${Math.round(f.size/1024)}KB)</span></div>`).join('');
+    list.insertAdjacentHTML('beforeend', `<button class="btn primary" style="margin-top:8px" onclick="doFileUpload()">⬆ Upload ${files.length} File${files.length>1?'s':''}</button>`);
+  }
+}
+
+function doYTIngest() {
+  const col  = val('yt-col');
+  const urls = val('yt-urls');
+  if (!col)  { toast('Select a collection', 'error'); return; }
+  if (!urls) { toast('Enter at least one URL', 'error'); return; }
+  ingestURLs(col, 'youtube', urls);
+}
+
+function doChannelIngest() {
+  const col = val('ch-col'), url = val('ch-url'), max = val('ch-max');
+  if (!col || !url) { toast('Collection and channel URL required', 'error'); return; }
+  ingestChannel(col, url, max || 50);
+}
+
+function doWebIngest() {
+  const col  = val('web-col');
+  const urls = val('web-urls');
+  if (!col || !urls) { toast('Collection and URLs required', 'error'); return; }
+  ingestURLs(col, 'web', urls);
+}
+
+function doTextIngest() {
+  const col     = val('txt-col');
+  const content = val('txt-content');
+  const title   = val('txt-title') || 'Pasted Text';
+  if (!col || !content) { toast('Collection and text required', 'error'); return; }
+  log(`Ingesting text: "${title}"`, 'info');
+  api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId: col, type: 'text', input: content, opts: { title } }) })
+    .then(() => { log(`Text queued: "${title}"`, 'ok'); toast('Text queued!', 'success'); })
+    .catch(e  => { log(`Error: ${e.message}`, 'err'); toast('Failed', 'error'); });
+}
+
+function doFileUpload() {
+  const col = val('file-col'), ctx = val('file-ctx');
+  if (!col) { toast('Select a collection', 'error'); return; }
+  if (!selectedFiles.length) { toast('No files selected', 'error'); return; }
+  uploadFiles(col, selectedFiles, ctx);
+}
+
+function doSearch() {
+  const col   = val('srch-col');
+  const q     = val('srch-q');
+  const pers  = val('srch-persona');
+  const stage = val('srch-stage');
+  if (!col || !q) { toast('Collection and query required', 'error'); return; }
+  runSearch(col, q, pers, stage);
+}
+
+function doAsk() {
+  const col = val('ask-col'), q = val('ask-q');
+  if (!col || !q) { toast('Collection and question required', 'error'); return; }
+  runAsk(col, q);
+}
+
+function submitNewCol() {
+  const id = val('nc-id'), name = val('nc-name'), desc = val('nc-desc');
+  if (!id || !name) { toast('ID and name required', 'error'); return; }
+  closeModal(); createCollection(id, name, desc);
+}
+
+function submitQuickIngest(colId) {
+  const type = val('qi-type'), input = val('qi-input');
+  if (!input) { toast('Input required', 'error'); return; }
+  closeModal();
+  log(`Ingesting ${type}: ${input.slice(0,60)}...`, 'info');
+  api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId: colId, type, input }) })
+    .then(() => { log('Queued!', 'ok'); toast('Queued!', 'success'); setTimeout(() => loadCollection(colId), 3000); })
+    .catch(e => { log(`Error: ${e.message}`, 'err'); toast('Failed', 'error'); });
+}
+
+function saveKey() { KEY = val('key-inp'); localStorage.setItem('tde_key', KEY); toast('API key saved', 'success'); loadAll(); }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function go(v) { view = v; render(); }
+
+function viewCol(id) {
+  state.selectedCol = id; state.colDetail = null; state.colSources = [];
+  view = 'detail'; render(); loadCollection(id);
+}
+
+function colSelect(id) {
+  if (!state.collections.length) return `<select id="${id}"><option value="">No collections yet</option></select>`;
+  return `<select id="${id}">${state.collections.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`;
+}
+
+function dims(key) {
+  const m = {
+    persona: ['Executive/C-Suite','CFO/Finance','CISO/Security','CTO/IT','VP Sales','VP Marketing','Operations','Practitioner','End User','General'],
+    buying_stage: ['Awareness','Interest','Evaluation','Decision','Retention','Advocacy'],
+  };
+  return m[key] || [];
+}
+
+function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+render();
+loadAll();
+</script>
+</body>
+</html>
