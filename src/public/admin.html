@@ -145,7 +145,7 @@ let state = {
 async function api(path, opts = {}) {
   const h = { 'Content-Type': 'application/json' };
   if (KEY) h['x-api-key'] = KEY;
-  const r = await fetch(`${API}${path}`, { ...opts, headers: { ...h, ...(opts.headers || {}) } });
+  const r = await fetch(`${API}${path}`, { ...opts, headers: { ...h, ...(opts.headers || {}) }, credentials: 'same-origin' });
   if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t.slice(0, 200)}`); }
   return r.json();
 }
@@ -153,7 +153,7 @@ async function api(path, opts = {}) {
 async function apiForm(path, formData) {
   const h = {};
   if (KEY) h['x-api-key'] = KEY;
-  const r = await fetch(`${API}${path}`, { method: 'POST', headers: h, body: formData });
+  const r = await fetch(`${API}${path}`, { method: 'POST', headers: h, body: formData, credentials: 'same-origin' });
   if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t.slice(0, 200)}`); }
   return r.json();
 }
@@ -731,7 +731,7 @@ function submitQuickIngest(colId) {
     .catch(e => { log(`Error: ${e.message}`, 'err'); toast('Failed', 'error'); });
 }
 
-function saveKey() { KEY = val('key-inp'); localStorage.setItem('tde_key', KEY); toast('API key saved', 'success'); loadAll(); }
+async function saveKey() { KEY = val('key-inp'); localStorage.setItem('tde_key', KEY); try { const r = await fetch(API+'/admin/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:KEY}),credentials:'same-origin'}); if(r.ok){toast('Authenticated! Cookie set.','success');loadAll();}else{toast('Invalid key','error');}} catch(e){toast('Auth failed: '+e.message,'error');}}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
