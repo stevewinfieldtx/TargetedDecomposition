@@ -87,6 +87,8 @@ class Store {
         CREATE INDEX IF NOT EXISTS idx_atoms_stage   ON atoms(d_buying_stage);
         CREATE INDEX IF NOT EXISTS idx_intel_col     ON intelligence(collection_id);
       `);
+      // Ensure columns added in v2.0+ exist on tables from older deploys
+      await this._migratePostgres();
       this.pgReady = true;
       console.log('  Storage: PostgreSQL');
     } catch (err) {
@@ -97,6 +99,22 @@ class Store {
         this._initSqliteTables();
       }
     }
+  }
+
+  async _migratePostgres() {
+    const migrations = [
+      // sources columns added in v2.0
+      `ALTER TABLE sources ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT ''`,
+      `ALTER TABLE sources ADD COLUMN IF NOT EXISTS page_count INTEGER DEFAULT 0`,
+      // atoms columns added in v2.0
+      `ALTER TABLE atoms ADD COLUMN IF NOT EXISTS speaker TEXT`,
+      `ALTER TABLE atoms ADD COLUMN IF NOT EXISTS atom_confidence REAL DEFAULT 1.0`,
+    ];
+    for (const sql of migrations) {
+      try { await this.pg.query(sql); }
+      catch (err) { console.log(`  Migration note: ${err.message}`); }
+    }
+    console.log('  Migrations: checked');
   }
 
   _initSqliteTables() {

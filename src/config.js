@@ -17,7 +17,7 @@ module.exports = {
   // Models
   ANALYSIS_MODEL:  process.env.ANALYSIS_MODEL  || 'qwen/qwen-2.5-72b-instruct',
   CONTENT_MODEL:   process.env.CONTENT_MODEL   || 'meta-llama/llama-3.1-70b-instruct',
-  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || 'sentence-transformers/multi-qa-mpnet-base-dot-v1',
+  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL || 'mistralai/mistral-embed-2312',
 
   // External services
   YOUTUBE_API_KEY:    process.env.YOUTUBE_API_KEY    || '',
@@ -32,7 +32,7 @@ module.exports = {
   DATABASE_URL:        process.env.DATABASE_URL       || '',
   QDRANT_URL:          process.env.QDRANT_URL         || '',
   QDRANT_API_KEY:      process.env.QDRANT_API_KEY     || '',
-  EMBEDDING_DIMENSION: parseInt(process.env.EMBEDDING_DIMENSION || '768'),
+  EMBEDDING_DIMENSION: parseInt(process.env.EMBEDDING_DIMENSION || '1024'),
   DATA_DIR:            process.env.DATA_DIR           || './data',
 
   // API security
