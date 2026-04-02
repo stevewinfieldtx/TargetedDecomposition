@@ -1,5 +1,5 @@
 /**
- * TDE — REST API Server
+ * TDE — REST API Server v2.0
  * ═══════════════════════════════════════════════════════════════════
  * Deploy on Railway. Port 8400 by default.
  *
@@ -16,8 +16,11 @@
  *   POST /upload/:collectionId           multipart file upload
  *   GET  /search/:collectionId           ?q= &persona= &buying_stage= &evidence_type= &top_k=
  *   POST /ask/:collectionId              {question, filters}
+ *   POST /analyze/:collectionId          Run template-specific analysis
+ *   POST /analyze/:collectionId/:sourceId Analyze single source
+ *   GET  /intelligence/:collectionId     ?type= Get intelligence data
  *   GET  /stats/:collectionId
- *   GET  /admin                          → Admin UI
+ *   GET  /admin                          Admin UI
  */
 
 const path    = require('path');
@@ -35,10 +38,10 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// File upload config — save to data/uploads/
+// File upload config
 const uploadDir = path.join(config.DATA_DIR, 'uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
-const upload = multer({ dest: uploadDir, limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB
+const upload = multer({ dest: uploadDir, limits: { fileSize: 100 * 1024 * 1024 } });
 
 function auth(req, res, next) {
   if (!config.API_SECRET_KEY) return next();
@@ -51,15 +54,16 @@ function auth(req, res, next) {
 
 app.get('/health', (req, res) => {
   res.json({
-    status:  'ok',
-    engine:  'TDE — Targeted Decomposition Engine',
-    version: '1.0.0',
+    status: 'ok',
+    engine: 'TDE — Targeted Decomposition Engine',
+    version: '2.0.0',
     hasOpenRouter: !!config.OPENROUTER_API_KEY,
     hasYouTubeAPI: !!config.YOUTUBE_API_KEY,
-    hasGroq:       !!config.GROQ_API_KEY,
-    vectorStore:   engine.store.qdrantReady ? 'qdrant' : 'sqlite',
+    hasGroq: !!config.GROQ_API_KEY,
+    vectorStore: engine.store.qdrantReady ? 'qdrant' : 'sqlite',
     qdrantConnected: engine.store.qdrantReady,
     supportedTypes: ['youtube', 'pdf', 'docx', 'pptx', 'audio', 'text', 'web'],
+    templates: Object.keys(config.TEMPLATES),
   });
 });
 
@@ -99,11 +103,10 @@ app.get('/atoms/:collectionId', auth, async (req, res) => {
   try {
     const { sourceId, persona, buying_stage, evidence_type } = req.query;
     const filters = {};
-    if (persona)       filters.persona       = persona;
-    if (buying_stage)  filters.buying_stage  = buying_stage;
+    if (persona) filters.persona = persona;
+    if (buying_stage) filters.buying_stage = buying_stage;
     if (evidence_type) filters.evidence_type = evidence_type;
     const atoms = await engine.getAtoms(req.params.collectionId, sourceId || null, filters);
-    // Strip embeddings from API response (large + not needed by callers)
     res.json(atoms.map(a => { const { embedding, ...rest } = a; return rest; }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -115,7 +118,6 @@ app.post('/ingest', auth, async (req, res) => {
     const { collectionId, type, input, opts } = req.body;
     if (!collectionId || !type || !input)
       return res.status(400).json({ error: 'collectionId, type, and input required' });
-    // Run async, return immediately with status
     res.json({ ok: true, status: 'ingestion_started', collectionId, type, input: input.slice(0, 100) });
     engine.ingest(collectionId, type, input, opts || {})
       .then(r => console.log(`  Ingest complete: ${r?.title}`))
@@ -165,17 +167,12 @@ app.post('/upload/:collectionId', auth, upload.array('files', 50), async (req, r
         mp3: 'audio', mp4: 'audio', m4a: 'audio', wav: 'audio', flac: 'audio', ogg: 'audio',
         txt: 'text', md: 'text' };
       const type = typeMap[ext] || 'text';
-
-      // Rename uploaded file to include original extension for type detection
       const newPath = file.path + '.' + ext;
-      const fsModule = require('fs');
-      fsModule.renameSync(file.path, newPath);
-
+      fs.renameSync(file.path, newPath);
       return { type, input: newPath, opts: { title: file.originalname } };
     });
 
     res.json({ ok: true, status: 'upload_started', count: items.length, files: req.files.map(f => f.originalname) });
-
     engine.ingestBatch(collectionId, items, context)
       .then(r => console.log(`  Upload batch complete: ${r.ingested}/${r.total}`))
       .catch(err => console.error(`  Upload error: ${err.message}`));
@@ -189,8 +186,8 @@ app.get('/search/:collectionId', auth, async (req, res) => {
     const { q, top_k, persona, buying_stage, evidence_type } = req.query;
     if (!q) return res.status(400).json({ error: 'q (query) required' });
     const filters = {};
-    if (persona)       filters.persona       = persona;
-    if (buying_stage)  filters.buying_stage  = buying_stage;
+    if (persona) filters.persona = persona;
+    if (buying_stage) filters.buying_stage = buying_stage;
     if (evidence_type) filters.evidence_type = evidence_type;
     const results = await engine.search(req.params.collectionId, q, parseInt(top_k) || 10, filters);
     res.json({ query: q, filters, count: results.length, results });
@@ -213,6 +210,31 @@ app.get('/stats/:collectionId', auth, async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Analysis ────────────────────────────────────────────────────────────────
+
+app.post('/analyze/:collectionId', auth, async (req, res) => {
+  try {
+    const results = await engine.analyzeCollection(req.params.collectionId);
+    res.json({ ok: true, results });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/analyze/:collectionId/:sourceId', auth, async (req, res) => {
+  try {
+    const result = await engine.analyzeSource(req.params.collectionId, req.params.sourceId);
+    res.json({ ok: true, result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Intelligence ────────────────────────────────────────────────────────────
+
+app.get('/intelligence/:collectionId', auth, async (req, res) => {
+  try {
+    const { type } = req.query;
+    res.json(await engine.getIntelligence(req.params.collectionId, type || null));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Admin UI ─────────────────────────────────────────────────────────────────
 
 app.get('/admin', (req, res) => {
@@ -224,11 +246,12 @@ app.use((req, res) => { res.status(404).json({ error: 'Not found', hint: 'See /h
 
 app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`  TDE — Targeted Decomposition Engine`);
+  console.log(`  TDE — Targeted Decomposition Engine v2.0`);
   console.log(`  Port:        ${config.PORT}`);
   console.log(`  OpenRouter:  ${config.OPENROUTER_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  YouTube API: ${config.YOUTUBE_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  Groq:        ${config.GROQ_API_KEY ? 'YES' : 'NO'}`);
+  console.log(`  Templates:   ${Object.keys(config.TEMPLATES).join(', ')}`);
   console.log(`  Admin UI:    http://localhost:${config.PORT}/admin`);
   console.log(`${'═'.repeat(60)}\n`);
 });
