@@ -2,25 +2,6 @@
  * TDE — REST API Server v2.0
  * ═══════════════════════════════════════════════════════════════════
  * Deploy on Railway. Port 8400 by default.
- *
- * Endpoints:
- *   GET  /health
- *   GET  /collections
- *   POST /collections                    {id, name, description}
- *   GET  /collections/:id
- *   GET  /sources/:collectionId
- *   GET  /atoms/:collectionId            ?sourceId= &persona= &buying_stage=
- *   POST /ingest                         {collectionId, type, input, opts}
- *   POST /ingest/batch                   {collectionId, items: [{type,input}], context}
- *   POST /ingest/channel                 {collectionId, channelUrl, maxVideos}
- *   POST /upload/:collectionId           multipart file upload
- *   GET  /search/:collectionId           ?q= &persona= &buying_stage= &evidence_type= &top_k=
- *   POST /ask/:collectionId              {question, filters}
- *   POST /analyze/:collectionId          Run template-specific analysis
- *   POST /analyze/:collectionId/:sourceId Analyze single source
- *   GET  /intelligence/:collectionId     ?type= Get intelligence data
- *   GET  /stats/:collectionId
- *   GET  /admin                          Admin UI
  */
 
 const path    = require('path');
@@ -43,37 +24,8 @@ const uploadDir = path.join(config.DATA_DIR, 'uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({ dest: uploadDir, limits: { fileSize: 100 * 1024 * 1024 } });
 
-function auth(req, res, next) {
-  // If no API_SECRET_KEY configured, allow everything
-  if (!config.API_SECRET_KEY) return next();
-
-  // Check x-api-key header (external API callers)
-  const key = req.headers['x-api-key'] || req.query.api_key;
-  if (key === config.API_SECRET_KEY) return next();
-
-  // Check cookie (admin GUI uses this)
-  const cookies = req.headers.cookie || '';
-  const cookieMatch = cookies.match(/tde_auth=([^;]+)/);
-  if (cookieMatch && cookieMatch[1] === config.API_SECRET_KEY) return next();
-
-  return res.status(401).json({ error: 'Invalid API key' });
-}
-
-// ── Admin Auth Endpoint ─────────────────────────────────────────────────────
-// Admin GUI posts the key here, gets a cookie back, never has to send headers again
-app.post('/admin/auth', (req, res) => {
-  const { key } = req.body || {};
-  if (!config.API_SECRET_KEY || key === config.API_SECRET_KEY) {
-    res.cookie('tde_auth', config.API_SECRET_KEY || 'open', {
-      httpOnly: false,  // JS needs to read it for status display
-      sameSite: 'strict',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      path: '/',
-    });
-    return res.json({ ok: true });
-  }
-  return res.status(401).json({ error: 'Invalid API key' });
-});
+// Auth disabled — re-enable later for external API callers
+function auth(req, res, next) { next(); }
 
 // ── Health ──────────────────────────────────────────────────────────────────
 
@@ -81,7 +33,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     engine: 'TDE — Targeted Decomposition Engine',
-    version: '2.0.0',
+    version: '2.0.1',
     hasOpenRouter: !!config.OPENROUTER_API_KEY,
     hasYouTubeAPI: !!config.YOUTUBE_API_KEY,
     hasGroq: !!config.GROQ_API_KEY,
@@ -271,12 +223,13 @@ app.use((req, res) => { res.status(404).json({ error: 'Not found', hint: 'See /h
 
 app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`  TDE — Targeted Decomposition Engine v2.0`);
+  console.log(`  TDE — Targeted Decomposition Engine v2.0.1`);
   console.log(`  Port:        ${config.PORT}`);
   console.log(`  OpenRouter:  ${config.OPENROUTER_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  YouTube API: ${config.YOUTUBE_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  Groq:        ${config.GROQ_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  Templates:   ${Object.keys(config.TEMPLATES).join(', ')}`);
+  console.log(`  Auth:        OPEN (no API key required)`);
   console.log(`  Admin UI:    http://localhost:${config.PORT}/admin`);
   console.log(`${'═'.repeat(60)}\n`);
 });

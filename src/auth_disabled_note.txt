@@ -1,0 +1,7 @@
+function auth(req, res, next) {
+  // AUTH DISABLED — re-enable when external API callers need key-based access
+  // if (!config.API_SECRET_KEY) return next();
+  // const key = req.headers['x-api-key'] || req.query.api_key;
+  // if (key !== config.API_SECRET_KEY) return res.status(401).json({ error: 'Invalid API key' });
+  next();
+}
