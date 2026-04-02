@@ -2,9 +2,9 @@
  * TDE — YouTube Ingestor
  * ================================
  * Strategy:
- *   1. YouTube Innertube API (player endpoint — no auth needed)
- *   2. YouTube Data API v3 for metadata, channels, comments
- *   3. Groq Whisper fallback for videos with no captions
+ *   1. ytInitialPlayerResponse from watch page (with CONSENT cookie)
+ *   2. Groq Whisper fallback for videos with no captions
+ *   3. YouTube Data API v3 for metadata, channels, comments
  *
  * Captures: views, likes, comments count + top comments text.
  */
@@ -105,17 +105,17 @@ async function getChannelVideoIds(channelInput, maxVideos = 100) {
 // ── Transcript Retrieval ─────────────────────────────────────────────────────
 
 async function getTranscript(videoId) {
-  // Strategy 1: Innertube API (YouTube's internal player API — no auth needed)
-  console.log(`  Trying Innertube API for captions...`);
-  const innertube = await fetchInnertubeTranscript(videoId);
-  if (innertube && innertube.text.length > 50) {
-    console.log(`  Innertube captions OK: ${innertube.text.length} chars`);
-    return { ...innertube, source: 'innertube' };
+  // Strategy 1: Extract captions from YouTube watch page player response
+  console.log(`  Fetching captions from watch page...`);
+  const captions = await fetchCaptionsFromWatchPage(videoId);
+  if (captions && captions.text.length > 50) {
+    console.log(`  Captions OK: ${captions.text.length} chars (${captions.language}, ${captions.kind || 'manual'})`);
+    return { ...captions, source: 'youtube-captions' };
   }
 
   // Strategy 2: Groq Whisper fallback (audio download + transcription)
   if (config.GROQ_API_KEY) {
-    console.log(`  No captions via Innertube — downloading audio for Groq Whisper...`);
+    console.log(`  No captions found — trying Groq Whisper fallback...`);
     const whisperResult = await downloadAndTranscribe(videoId);
     if (whisperResult && whisperResult.text.length > 20) {
       console.log(`  Groq Whisper OK: ${whisperResult.text.length} chars`);
@@ -127,39 +127,37 @@ async function getTranscript(videoId) {
 }
 
 /**
- * Fetch transcript via YouTube's Innertube API.
- * This is the same API the YouTube web player calls internally.
- * No OAuth or API key required — it's a public endpoint.
+ * Fetch captions by extracting ytInitialPlayerResponse from the watch page.
+ * Uses CONSENT=YES+ cookie to bypass EU consent walls.
+ * This approach works from datacenter IPs where the Innertube API is blocked.
  */
-async function fetchInnertubeTranscript(videoId) {
+async function fetchCaptionsFromWatchPage(videoId) {
   try {
-    // Step 1: Get the player response to find caption track URLs
-    const playerResp = await fetch('https://www.youtube.com/youtubei/v1/player', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoId,
-        context: {
-          client: {
-            clientName: 'WEB',
-            clientVersion: '2.20240101.00.00',
-            hl: 'en',
-            gl: 'US',
-          },
-        },
-      }),
+    const resp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'CONSENT=YES+',
+      },
     });
+    if (!resp.ok) { console.log(`  Watch page fetch error: ${resp.status}`); return null; }
+    const html = await resp.text();
 
-    if (!playerResp.ok) {
-      console.log(`  Innertube player error: ${playerResp.status}`);
+    // Extract ytInitialPlayerResponse from the page
+    const match = html.match(/var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\});/)
+               || html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});/);
+    if (!match) {
+      console.log(`  No ytInitialPlayerResponse found in watch page`);
       return null;
     }
 
-    const playerData = await playerResp.json();
-    const captionTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    let playerData;
+    try { playerData = JSON.parse(match[1]); }
+    catch (e) { console.log(`  Failed to parse player response: ${e.message}`); return null; }
 
+    const captionTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     if (!captionTracks || captionTracks.length === 0) {
-      console.log(`  No caption tracks found via Innertube`);
+      console.log(`  No caption tracks in player response`);
       return null;
     }
 
@@ -169,14 +167,15 @@ async function fetchInnertubeTranscript(videoId) {
              || captionTracks[0];
 
     if (!track?.baseUrl) {
-      console.log(`  No baseUrl on caption track`);
+      console.log(`  No baseUrl on selected caption track`);
       return null;
     }
 
     const lang = track.languageCode || 'en';
-    console.log(`  Found caption track: ${track.name?.simpleText || lang} (${track.kind === 'asr' ? 'auto' : 'manual'})`);
+    const kind = track.kind || 'manual';
+    console.log(`  Caption track: ${track.name?.simpleText || lang} (${kind}), ${captionTracks.length} tracks available`);
 
-    // Step 2: Try JSON3 format first (structured with timestamps)
+    // Try JSON3 format first (structured with timestamps)
     try {
       const j3Resp = await fetch(track.baseUrl + '&fmt=json3');
       if (j3Resp.ok) {
@@ -194,12 +193,12 @@ async function fetchInnertubeTranscript(videoId) {
           });
         }
         if (segments.length > 0) {
-          return { text: segments.map(s => s.text).join(' '), segments, language: lang };
+          return { text: segments.map(s => s.text).join(' '), segments, language: lang, kind };
         }
       }
-    } catch (e) { console.log(`  JSON3 parse failed: ${e.message}`); }
+    } catch (e) { console.log(`  JSON3 format failed: ${e.message}`); }
 
-    // Step 3: Fall back to XML format
+    // Fall back to XML format
     const xmlResp = await fetch(track.baseUrl);
     if (!xmlResp.ok) return null;
     const xml = await xmlResp.text();
@@ -220,10 +219,10 @@ async function fetchInnertubeTranscript(videoId) {
       }
     }
     if (segments.length === 0) return null;
-    return { text: segments.map(s => s.text).join(' '), segments, language: lang };
+    return { text: segments.map(s => s.text).join(' '), segments, language: lang, kind };
 
   } catch (err) {
-    console.log(`  Innertube error: ${err.message}`);
+    console.log(`  Watch page caption error: ${err.message}`);
     return null;
   }
 }
