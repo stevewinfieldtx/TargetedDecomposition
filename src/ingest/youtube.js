@@ -1,9 +1,11 @@
 /**
- * TrueEngine - YouTube Ingestor
+ * TDE — YouTube Ingestor
  * ================================
- * Strategy: captions first, Groq Whisper fallback.
- * Uses yt-dlp + Deno (for YouTube JS challenges) for audio download,
- * form-data + https for Groq upload.
+ * Strategy:
+ *   1. YouTube Innertube API (player endpoint — no auth needed)
+ *   2. YouTube Data API v3 for metadata, channels, comments
+ *   3. Groq Whisper fallback for videos with no captions
+ *
  * Captures: views, likes, comments count + top comments text.
  */
 const { execSync } = require('child_process');
@@ -100,23 +102,133 @@ async function getChannelVideoIds(channelInput, maxVideos = 100) {
   } catch (err) { console.error(`  Channel scan error: ${err.message}`); return []; }
 }
 
+// ── Transcript Retrieval ─────────────────────────────────────────────────────
+
 async function getTranscript(videoId) {
-  console.log(`  Trying captions...`);
-  const captions = await fetchYouTubeCaptions(videoId);
-  if (captions && captions.text.length > 50) {
-    console.log(`  Captions OK: ${captions.text.length} chars`);
-    return { ...captions, source: 'captions' };
+  // Strategy 1: Innertube API (YouTube's internal player API — no auth needed)
+  console.log(`  Trying Innertube API for captions...`);
+  const innertube = await fetchInnertubeTranscript(videoId);
+  if (innertube && innertube.text.length > 50) {
+    console.log(`  Innertube captions OK: ${innertube.text.length} chars`);
+    return { ...innertube, source: 'innertube' };
   }
+
+  // Strategy 2: Groq Whisper fallback (audio download + transcription)
   if (config.GROQ_API_KEY) {
-    console.log(`  No captions - downloading audio for Groq Whisper...`);
+    console.log(`  No captions via Innertube — downloading audio for Groq Whisper...`);
     const whisperResult = await downloadAndTranscribe(videoId);
     if (whisperResult && whisperResult.text.length > 20) {
       console.log(`  Groq Whisper OK: ${whisperResult.text.length} chars`);
       return { ...whisperResult, source: 'groq-whisper' };
     }
   }
+
   return null;
 }
+
+/**
+ * Fetch transcript via YouTube's Innertube API.
+ * This is the same API the YouTube web player calls internally.
+ * No OAuth or API key required — it's a public endpoint.
+ */
+async function fetchInnertubeTranscript(videoId) {
+  try {
+    // Step 1: Get the player response to find caption track URLs
+    const playerResp = await fetch('https://www.youtube.com/youtubei/v1/player', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videoId,
+        context: {
+          client: {
+            clientName: 'WEB',
+            clientVersion: '2.20240101.00.00',
+            hl: 'en',
+            gl: 'US',
+          },
+        },
+      }),
+    });
+
+    if (!playerResp.ok) {
+      console.log(`  Innertube player error: ${playerResp.status}`);
+      return null;
+    }
+
+    const playerData = await playerResp.json();
+    const captionTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+    if (!captionTracks || captionTracks.length === 0) {
+      console.log(`  No caption tracks found via Innertube`);
+      return null;
+    }
+
+    // Pick best track: prefer manual English, then any English, then first available
+    let track = captionTracks.find(t => t.languageCode === 'en' && t.kind !== 'asr')
+             || captionTracks.find(t => t.languageCode === 'en')
+             || captionTracks[0];
+
+    if (!track?.baseUrl) {
+      console.log(`  No baseUrl on caption track`);
+      return null;
+    }
+
+    const lang = track.languageCode || 'en';
+    console.log(`  Found caption track: ${track.name?.simpleText || lang} (${track.kind === 'asr' ? 'auto' : 'manual'})`);
+
+    // Step 2: Try JSON3 format first (structured with timestamps)
+    try {
+      const j3Resp = await fetch(track.baseUrl + '&fmt=json3');
+      if (j3Resp.ok) {
+        const json3 = await j3Resp.json();
+        const segments = [];
+        for (const event of (json3.events || [])) {
+          if (!event.segs) continue;
+          const text = event.segs.map(s => s.utf8 || '').join('').trim();
+          if (!text || text === '\n') continue;
+          segments.push({
+            id: segments.length,
+            start: (event.tStartMs || 0) / 1000,
+            end: ((event.tStartMs || 0) + (event.dDurationMs || 0)) / 1000,
+            text,
+          });
+        }
+        if (segments.length > 0) {
+          return { text: segments.map(s => s.text).join(' '), segments, language: lang };
+        }
+      }
+    } catch (e) { console.log(`  JSON3 parse failed: ${e.message}`); }
+
+    // Step 3: Fall back to XML format
+    const xmlResp = await fetch(track.baseUrl);
+    if (!xmlResp.ok) return null;
+    const xml = await xmlResp.text();
+    const segments = [];
+    const regex = /<text start="([\d.]+)" dur="([\d.]+)"[^>]*>(.*?)<\/text>/gs;
+    let m;
+    while ((m = regex.exec(xml)) !== null) {
+      const text = m[3]
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/<[^>]+>/g, '').trim();
+      if (text) {
+        segments.push({
+          id: segments.length,
+          start: parseFloat(m[1]),
+          end: parseFloat(m[1]) + parseFloat(m[2]),
+          text,
+        });
+      }
+    }
+    if (segments.length === 0) return null;
+    return { text: segments.map(s => s.text).join(' '), segments, language: lang };
+
+  } catch (err) {
+    console.log(`  Innertube error: ${err.message}`);
+    return null;
+  }
+}
+
+// ── Groq Whisper Fallback ────────────────────────────────────────────────────
 
 async function downloadAndTranscribe(videoId) {
   const audioDir = path.join(config.DATA_DIR, 'audio');
@@ -131,7 +243,7 @@ async function downloadAndTranscribe(videoId) {
       } catch {
         try {
           execSync(`yt-dlp -x --audio-format m4a --no-playlist -o "${audioPath}" "${ytUrl}"`, { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
-        } catch { console.log(`  Audio download failed`); return null; }
+        } catch { console.log(`  Audio download failed (yt-dlp not available or blocked)`); return null; }
       }
     }
     if (!fs.existsSync(audioPath)) return null;
@@ -177,47 +289,6 @@ function groqWhisperTranscribe(audioPath, videoId) {
     req.on('error', (err) => { console.log(`  Groq request error: ${err.message}`); resolve(null); });
     form.pipe(req);
   });
-}
-
-async function fetchYouTubeCaptions(videoId) {
-  try {
-    const resp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-    });
-    const html = await resp.text();
-    const captionMatch = html.match(/"captionTracks":\s*(\[.*?\])/);
-    if (!captionMatch) return null;
-    let tracks; try { tracks = JSON.parse(captionMatch[1]); } catch { return null; }
-    let track = tracks.find(t => t.languageCode === 'en' && t.kind !== 'asr') || tracks.find(t => t.languageCode === 'en') || tracks[0];
-    if (!track?.baseUrl) return null;
-
-    try {
-      const jResp = await fetch(track.baseUrl + '&fmt=json3');
-      if (jResp.ok) {
-        const json3 = await jResp.json();
-        const segments = [];
-        for (const event of (json3.events || [])) {
-          if (!event.segs) continue;
-          const text = event.segs.map(s => s.utf8 || '').join('').trim();
-          if (!text) continue;
-          segments.push({ id: segments.length, start: (event.tStartMs || 0) / 1000, end: ((event.tStartMs || 0) + (event.dDurationMs || 0)) / 1000, text });
-        }
-        if (segments.length > 0) return { text: segments.map(s => s.text).join(' '), segments, language: 'en' };
-      }
-    } catch {}
-
-    const xmlResp = await fetch(track.baseUrl); if (!xmlResp.ok) return null;
-    const xml = await xmlResp.text();
-    const segments = [];
-    const regex = /<text start="([\d.]+)" dur="([\d.]+)"[^>]*>(.*?)<\/text>/gs;
-    let m;
-    while ((m = regex.exec(xml)) !== null) {
-      const text = m[3].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/<[^>]+>/g, '').trim();
-      if (text) segments.push({ id: segments.length, start: parseFloat(m[1]), end: parseFloat(m[1]) + parseFloat(m[2]), text });
-    }
-    if (segments.length === 0) return null;
-    return { text: segments.map(s => s.text).join(' '), segments, language: 'en' };
-  } catch { return null; }
 }
 
 module.exports = { extractVideoId, getVideoMetadata, getChannelVideoIds, getTranscript, getVideoComments };
