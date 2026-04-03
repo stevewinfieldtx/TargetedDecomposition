@@ -2,9 +2,10 @@
  * TDE — YouTube Ingestor
  * ================================
  * Strategy:
- *   1. ytInitialPlayerResponse from watch page (with CONSENT cookie)
- *   2. Groq Whisper fallback for videos with no captions
- *   3. YouTube Data API v3 for metadata, channels, comments
+ *   1. yt-dlp subtitle-only extraction (via residential proxy if configured)
+ *   2. Watch page caption scraping (via proxy if configured)
+ *   3. Groq Whisper fallback (audio download via yt-dlp + proxy)
+ *   4. YouTube Data API v3 for metadata, channels, comments
  *
  * Captures: views, likes, comments count + top comments text.
  */
@@ -14,6 +15,9 @@ const path = require('path');
 const https = require('https');
 const FormData = require('form-data');
 const config = require('../config');
+
+// Proxy URL for YouTube requests (residential proxy bypasses datacenter IP blocks)
+const PROXY_URL = process.env.WEBSHARE_PROXY_URL || '';
 
 function extractVideoId(url) {
   if (url.includes('youtube.com') && url.includes('v=')) return url.split('v=')[1].split('&')[0];
@@ -105,17 +109,26 @@ async function getChannelVideoIds(channelInput, maxVideos = 100) {
 // ── Transcript Retrieval ─────────────────────────────────────────────────────
 
 async function getTranscript(videoId) {
-  // Strategy 1: Extract captions from YouTube watch page player response
-  console.log(`  Fetching captions from watch page...`);
-  const captions = await fetchCaptionsFromWatchPage(videoId);
-  if (captions && captions.text.length > 50) {
-    console.log(`  Captions OK: ${captions.text.length} chars (${captions.language}, ${captions.kind || 'manual'})`);
-    return { ...captions, source: 'youtube-captions' };
+  // Strategy 1: yt-dlp subtitle-only extraction (same approach as TrueInfluence)
+  // This is the fastest and most reliable — no audio download needed
+  console.log(`  Trying yt-dlp subtitle extraction...`);
+  const ytdlpResult = await extractSubtitlesViaYtdlp(videoId);
+  if (ytdlpResult && ytdlpResult.text.length > 50) {
+    console.log(`  yt-dlp subtitles OK: ${ytdlpResult.text.length} chars`);
+    return { ...ytdlpResult, source: 'yt-dlp-subs' };
   }
 
-  // Strategy 2: Groq Whisper fallback (audio download + transcription)
+  // Strategy 2: Watch page caption scraping (via proxy if available)
+  console.log(`  Trying watch page captions...`);
+  const captions = await fetchCaptionsFromWatchPage(videoId);
+  if (captions && captions.text.length > 50) {
+    console.log(`  Watch page captions OK: ${captions.text.length} chars`);
+    return { ...captions, source: 'watch-page' };
+  }
+
+  // Strategy 3: Groq Whisper fallback (audio download + transcription)
   if (config.GROQ_API_KEY) {
-    console.log(`  No captions found — trying Groq Whisper fallback...`);
+    console.log(`  No subtitles found — trying Groq Whisper fallback...`);
     const whisperResult = await downloadAndTranscribe(videoId);
     if (whisperResult && whisperResult.text.length > 20) {
       console.log(`  Groq Whisper OK: ${whisperResult.text.length} chars`);
@@ -127,13 +140,173 @@ async function getTranscript(videoId) {
 }
 
 /**
+ * Extract subtitles via yt-dlp --skip-download (no audio needed).
+ * This is the same approach TrueInfluence uses successfully.
+ * Routes through residential proxy if WEBSHARE_PROXY_URL is set.
+ */
+function extractSubtitlesViaYtdlp(videoId) {
+  const tmpDir = path.join(config.DATA_DIR, 'tmp_subs');
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const outTemplate = path.join(tmpDir, videoId);
+
+  // Clean any previous files for this video
+  try {
+    for (const f of fs.readdirSync(tmpDir)) {
+      if (f.startsWith(videoId)) fs.unlinkSync(path.join(tmpDir, f));
+    }
+  } catch {}
+
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const proxyArgs = PROXY_URL ? ['--proxy', PROXY_URL] : [];
+
+  try {
+    // Try to get subtitles (auto + manual, English preferred)
+    const cmd = [
+      'yt-dlp',
+      '--skip-download',
+      '--write-auto-sub',
+      '--write-sub',
+      '--sub-lang', 'en',
+      '--sub-format', 'json3',
+      '--no-warnings',
+      '--quiet',
+      ...proxyArgs,
+      '-o', outTemplate,
+      ytUrl,
+    ];
+    execSync(cmd.join(' '), { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch {
+    // Retry with vtt format
+    try {
+      const cmd2 = [
+        'yt-dlp',
+        '--skip-download',
+        '--write-auto-sub',
+        '--write-sub',
+        '--sub-lang', 'en',
+        '--sub-format', 'vtt',
+        '--no-warnings',
+        '--quiet',
+        ...proxyArgs,
+        '-o', outTemplate,
+        ytUrl,
+      ];
+      execSync(cmd2.join(' '), { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch {
+      console.log(`  yt-dlp subtitle extraction failed`);
+      return null;
+    }
+  }
+
+  // Find the subtitle file
+  let subFile = null;
+  try {
+    for (const f of fs.readdirSync(tmpDir)) {
+      if (f.startsWith(videoId) && (f.endsWith('.json3') || f.endsWith('.vtt'))) {
+        subFile = path.join(tmpDir, f);
+        break;
+      }
+    }
+  } catch {}
+
+  if (!subFile) return null;
+
+  try {
+    const content = fs.readFileSync(subFile, 'utf-8');
+    const segments = [];
+
+    if (subFile.endsWith('.json3')) {
+      const data = JSON.parse(content);
+      for (const ev of (data.events || [])) {
+        if (!ev.segs) continue;
+        const text = ev.segs.map(s => s.utf8 || '').join('').trim();
+        if (!text || text === '\n') continue;
+        segments.push({
+          id: segments.length,
+          start: (ev.tStartMs || 0) / 1000,
+          end: ((ev.tStartMs || 0) + (ev.dDurationMs || 0)) / 1000,
+          text: text.replace(/\n/g, ' '),
+        });
+      }
+    } else {
+      // Parse VTT
+      const blocks = content.split('\n\n');
+      for (const block of blocks) {
+        const lines = block.trim().split('\n');
+        const tsLine = lines.find(l => l.includes('-->'));
+        if (!tsLine) continue;
+        const textLines = lines.filter(l => !l.includes('-->') && !/^\d+$/.test(l.trim()) && !l.startsWith('WEBVTT'));
+        const text = textLines.join(' ').replace(/<[^>]+>/g, '').trim();
+        if (!text) continue;
+        const [startStr] = tsLine.split('-->');
+        const parts = startStr.trim().split(':');
+        let start = 0;
+        if (parts.length === 3) start = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+        else if (parts.length === 2) start = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+        segments.push({ id: segments.length, start, end: start + 5, text });
+      }
+    }
+
+    // Clean up
+    try { fs.unlinkSync(subFile); } catch {}
+
+    if (segments.length === 0) return null;
+    return { text: segments.map(s => s.text).join(' '), segments, language: 'en' };
+  } catch (err) {
+    console.log(`  Subtitle parse error: ${err.message}`);
+    try { fs.unlinkSync(subFile); } catch {}
+    return null;
+  }
+}
+
+/**
  * Fetch captions by extracting ytInitialPlayerResponse from the watch page.
- * Uses CONSENT=YES+ cookie to bypass EU consent walls.
- * This approach works from datacenter IPs where the Innertube API is blocked.
+ * Uses residential proxy if available, plus CONSENT=YES+ cookie.
  */
 async function fetchCaptionsFromWatchPage(videoId) {
   try {
-    const resp = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+    // If we have a proxy, use it via the https module
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    let html;
+
+    if (PROXY_URL) {
+      // Use yt-dlp to dump the page (it handles proxy + cookies better than raw fetch)
+      try {
+        const result = execSync(
+          `yt-dlp --dump-json --skip-download --proxy "${PROXY_URL}" "${watchUrl}"`,
+          { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+        );
+        const videoData = JSON.parse(result.toString());
+        // yt-dlp --dump-json includes subtitle info
+        const subs = videoData.subtitles || videoData.automatic_captions || {};
+        const enSubs = subs.en || subs['en-orig'] || Object.values(subs)[0];
+        if (enSubs && enSubs.length > 0) {
+          // Find json3 format
+          const json3 = enSubs.find(s => s.ext === 'json3') || enSubs[0];
+          if (json3 && json3.url) {
+            const subResp = await fetch(json3.url);
+            if (subResp.ok) {
+              const subData = await subResp.json();
+              const segments = [];
+              for (const ev of (subData.events || [])) {
+                if (!ev.segs) continue;
+                const text = ev.segs.map(s => s.utf8 || '').join('').trim();
+                if (!text || text === '\n') continue;
+                segments.push({ id: segments.length, start: (ev.tStartMs || 0) / 1000, end: ((ev.tStartMs || 0) + (ev.dDurationMs || 0)) / 1000, text });
+              }
+              if (segments.length > 0) {
+                return { text: segments.map(s => s.text).join(' '), segments, language: 'en' };
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`  yt-dlp dump-json failed: ${e.message}`);
+      }
+    }
+
+    // Fallback: direct fetch with CONSENT cookie
+    const resp = await fetch(watchUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
@@ -141,41 +314,27 @@ async function fetchCaptionsFromWatchPage(videoId) {
       },
     });
     if (!resp.ok) { console.log(`  Watch page fetch error: ${resp.status}`); return null; }
-    const html = await resp.text();
+    html = await resp.text();
 
-    // Extract ytInitialPlayerResponse from the page
     const match = html.match(/var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\});/)
                || html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});/);
-    if (!match) {
-      console.log(`  No ytInitialPlayerResponse found in watch page`);
-      return null;
-    }
+    if (!match) { console.log(`  No ytInitialPlayerResponse found`); return null; }
 
     let playerData;
     try { playerData = JSON.parse(match[1]); }
-    catch (e) { console.log(`  Failed to parse player response: ${e.message}`); return null; }
+    catch (e) { console.log(`  Failed to parse player response`); return null; }
 
     const captionTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (!captionTracks || captionTracks.length === 0) {
-      console.log(`  No caption tracks in player response`);
-      return null;
-    }
+    if (!captionTracks || captionTracks.length === 0) { console.log(`  No caption tracks in player response`); return null; }
 
-    // Pick best track: prefer manual English, then any English, then first available
     let track = captionTracks.find(t => t.languageCode === 'en' && t.kind !== 'asr')
              || captionTracks.find(t => t.languageCode === 'en')
              || captionTracks[0];
-
-    if (!track?.baseUrl) {
-      console.log(`  No baseUrl on selected caption track`);
-      return null;
-    }
+    if (!track?.baseUrl) return null;
 
     const lang = track.languageCode || 'en';
-    const kind = track.kind || 'manual';
-    console.log(`  Caption track: ${track.name?.simpleText || lang} (${kind}), ${captionTracks.length} tracks available`);
 
-    // Try JSON3 format first (structured with timestamps)
+    // Try JSON3 format
     try {
       const j3Resp = await fetch(track.baseUrl + '&fmt=json3');
       if (j3Resp.ok) {
@@ -185,20 +344,13 @@ async function fetchCaptionsFromWatchPage(videoId) {
           if (!event.segs) continue;
           const text = event.segs.map(s => s.utf8 || '').join('').trim();
           if (!text || text === '\n') continue;
-          segments.push({
-            id: segments.length,
-            start: (event.tStartMs || 0) / 1000,
-            end: ((event.tStartMs || 0) + (event.dDurationMs || 0)) / 1000,
-            text,
-          });
+          segments.push({ id: segments.length, start: (event.tStartMs || 0) / 1000, end: ((event.tStartMs || 0) + (event.dDurationMs || 0)) / 1000, text });
         }
-        if (segments.length > 0) {
-          return { text: segments.map(s => s.text).join(' '), segments, language: lang, kind };
-        }
+        if (segments.length > 0) return { text: segments.map(s => s.text).join(' '), segments, language: lang };
       }
-    } catch (e) { console.log(`  JSON3 format failed: ${e.message}`); }
+    } catch {}
 
-    // Fall back to XML format
+    // XML fallback
     const xmlResp = await fetch(track.baseUrl);
     if (!xmlResp.ok) return null;
     const xml = await xmlResp.text();
@@ -206,23 +358,13 @@ async function fetchCaptionsFromWatchPage(videoId) {
     const regex = /<text start="([\d.]+)" dur="([\d.]+)"[^>]*>(.*?)<\/text>/gs;
     let m;
     while ((m = regex.exec(xml)) !== null) {
-      const text = m[3]
-        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/<[^>]+>/g, '').trim();
-      if (text) {
-        segments.push({
-          id: segments.length,
-          start: parseFloat(m[1]),
-          end: parseFloat(m[1]) + parseFloat(m[2]),
-          text,
-        });
-      }
+      const text = m[3].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/<[^>]+>/g, '').trim();
+      if (text) segments.push({ id: segments.length, start: parseFloat(m[1]), end: parseFloat(m[1]) + parseFloat(m[2]), text });
     }
     if (segments.length === 0) return null;
-    return { text: segments.map(s => s.text).join(' '), segments, language: lang, kind };
-
+    return { text: segments.map(s => s.text).join(' '), segments, language: lang };
   } catch (err) {
-    console.log(`  Watch page caption error: ${err.message}`);
+    console.log(`  Watch page error: ${err.message}`);
     return null;
   }
 }
@@ -233,16 +375,17 @@ async function downloadAndTranscribe(videoId) {
   const audioDir = path.join(config.DATA_DIR, 'audio');
   fs.mkdirSync(audioDir, { recursive: true });
   const audioPath = path.join(audioDir, `${videoId}.m4a`);
+  const proxyArgs = PROXY_URL ? `--proxy "${PROXY_URL}"` : '';
 
   try {
     if (!fs.existsSync(audioPath)) {
       const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
       try {
-        execSync(`yt-dlp -f "ba[ext=m4a]/ba" --no-playlist -o "${audioPath}" "${ytUrl}"`, { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
+        execSync(`yt-dlp -f "ba[ext=m4a]/ba" --no-playlist ${proxyArgs} -o "${audioPath}" "${ytUrl}"`, { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch {
         try {
-          execSync(`yt-dlp -x --audio-format m4a --no-playlist -o "${audioPath}" "${ytUrl}"`, { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
-        } catch { console.log(`  Audio download failed (yt-dlp not available or blocked)`); return null; }
+          execSync(`yt-dlp -x --audio-format m4a --no-playlist ${proxyArgs} -o "${audioPath}" "${ytUrl}"`, { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
+        } catch { console.log(`  Audio download failed`); return null; }
       }
     }
     if (!fs.existsSync(audioPath)) return null;
