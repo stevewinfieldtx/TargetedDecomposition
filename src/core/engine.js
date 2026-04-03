@@ -40,6 +40,7 @@ class TDEngine {
   }
   getCollection(id)    { return this.store.getCollection(id); }
   listCollections()    { return this.store.listCollections(); }
+  deleteCollection(id) { return this.store.deleteCollection(id); }
 
   // ── Universal Ingest ─────────────────────────────────────────────────────────
 
