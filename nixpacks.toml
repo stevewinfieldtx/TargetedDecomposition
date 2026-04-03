@@ -3,4 +3,4 @@ nixPkgs = ["...", "ffmpeg"]
 aptPkgs = ["...", "python3-pip"]
 
 [phases.install]
-cmds = ["...", "pip install yt-dlp"]
+cmds = ["...", "pip install --break-system-packages yt-dlp"]
