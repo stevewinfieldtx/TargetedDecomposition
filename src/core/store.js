@@ -87,7 +87,6 @@ class Store {
         CREATE INDEX IF NOT EXISTS idx_atoms_stage   ON atoms(d_buying_stage);
         CREATE INDEX IF NOT EXISTS idx_intel_col     ON intelligence(collection_id);
       `);
-      // Ensure columns added in v2.0+ exist on tables from older deploys
       await this._migratePostgres();
       this.pgReady = true;
       console.log('  Storage: PostgreSQL');
@@ -103,10 +102,8 @@ class Store {
 
   async _migratePostgres() {
     const migrations = [
-      // sources columns added in v2.0
       `ALTER TABLE sources ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT ''`,
       `ALTER TABLE sources ADD COLUMN IF NOT EXISTS page_count INTEGER DEFAULT 0`,
-      // atoms columns added in v2.0
       `ALTER TABLE atoms ADD COLUMN IF NOT EXISTS speaker TEXT`,
       `ALTER TABLE atoms ADD COLUMN IF NOT EXISTS atom_confidence REAL DEFAULT 1.0`,
     ];
@@ -119,52 +116,15 @@ class Store {
 
   _initSqliteTables() {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS collections (
-        id TEXT PRIMARY KEY, name TEXT, description TEXT DEFAULT '',
-        metadata TEXT DEFAULT '{}',
-        created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
-      );
-      CREATE TABLE IF NOT EXISTS sources (
-        id TEXT, collection_id TEXT,
-        source_type TEXT DEFAULT 'unknown',
-        source_url TEXT DEFAULT '', file_path TEXT DEFAULT '',
-        title TEXT DEFAULT '', author TEXT DEFAULT '',
-        published_at TEXT DEFAULT '', duration INTEGER DEFAULT 0,
-        page_count INTEGER DEFAULT 0,
-        metadata TEXT DEFAULT '{}', status TEXT DEFAULT 'pending',
-        ingested_at TEXT DEFAULT (datetime('now')),
-        PRIMARY KEY (id, collection_id)
-      );
-      CREATE TABLE IF NOT EXISTS atoms (
-        id TEXT PRIMARY KEY,
-        source_id TEXT, collection_id TEXT,
-        text TEXT,
-        atom_index INTEGER DEFAULT 0,
-        atom_type TEXT DEFAULT 'general',
-        atom_confidence REAL DEFAULT 1.0,
-        start_time REAL DEFAULT 0, end_time REAL DEFAULT 0,
-        page_number INTEGER DEFAULT 0,
-        speaker TEXT,
-        d_persona TEXT DEFAULT '',
-        d_buying_stage TEXT DEFAULT '',
-        d_emotional_driver TEXT DEFAULT '',
-        d_evidence_type TEXT DEFAULT '',
-        d_credibility INTEGER DEFAULT 3,
-        d_recency TEXT DEFAULT '',
-        embedding TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-      CREATE TABLE IF NOT EXISTS intelligence (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        collection_id TEXT, intel_type TEXT,
-        data TEXT DEFAULT '{}',
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_sources_col   ON sources(collection_id);
-      CREATE INDEX IF NOT EXISTS idx_atoms_src     ON atoms(source_id);
-      CREATE INDEX IF NOT EXISTS idx_atoms_col     ON atoms(collection_id);
+      CREATE TABLE IF NOT EXISTS collections (id TEXT PRIMARY KEY, name TEXT, description TEXT DEFAULT '', metadata TEXT DEFAULT '{}', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));
+      CREATE TABLE IF NOT EXISTS sources (id TEXT, collection_id TEXT, source_type TEXT DEFAULT 'unknown', source_url TEXT DEFAULT '', file_path TEXT DEFAULT '', title TEXT DEFAULT '', author TEXT DEFAULT '', published_at TEXT DEFAULT '', duration INTEGER DEFAULT 0, page_count INTEGER DEFAULT 0, metadata TEXT DEFAULT '{}', status TEXT DEFAULT 'pending', ingested_at TEXT DEFAULT (datetime('now')), PRIMARY KEY (id, collection_id));
+      CREATE TABLE IF NOT EXISTS atoms (id TEXT PRIMARY KEY, source_id TEXT, collection_id TEXT, text TEXT, atom_index INTEGER DEFAULT 0, atom_type TEXT DEFAULT 'general', atom_confidence REAL DEFAULT 1.0, start_time REAL DEFAULT 0, end_time REAL DEFAULT 0, page_number INTEGER DEFAULT 0, speaker TEXT, d_persona TEXT DEFAULT '', d_buying_stage TEXT DEFAULT '', d_emotional_driver TEXT DEFAULT '', d_evidence_type TEXT DEFAULT '', d_credibility INTEGER DEFAULT 3, d_recency TEXT DEFAULT '', embedding TEXT, created_at TEXT DEFAULT (datetime('now')));
+      CREATE TABLE IF NOT EXISTS intelligence (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id TEXT, intel_type TEXT, data TEXT DEFAULT '{}', created_at TEXT DEFAULT (datetime('now')));
+      CREATE INDEX IF NOT EXISTS idx_sources_col ON sources(collection_id);
+      CREATE INDEX IF NOT EXISTS idx_atoms_src ON atoms(source_id);
+      CREATE INDEX IF NOT EXISTS idx_atoms_col ON atoms(collection_id);
       CREATE INDEX IF NOT EXISTS idx_atoms_persona ON atoms(d_persona);
-      CREATE INDEX IF NOT EXISTS idx_atoms_stage   ON atoms(d_buying_stage);
+      CREATE INDEX IF NOT EXISTS idx_atoms_stage ON atoms(d_buying_stage);
     `);
   }
 
@@ -239,6 +199,26 @@ class Store {
     if (!this.db) return [];
     return this.db.prepare('SELECT * FROM collections ORDER BY created_at DESC').all()
       .map(r => ({ ...r, metadata: JSON.parse(r.metadata || '{}') }));
+  }
+
+  async deleteCollection(id) {
+    await this._waitReady();
+    if (this._usePg()) {
+      await this.pg.query('DELETE FROM atoms WHERE collection_id=$1', [id]);
+      await this.pg.query('DELETE FROM sources WHERE collection_id=$1', [id]);
+      await this.pg.query('DELETE FROM intelligence WHERE collection_id=$1', [id]);
+      await this.pg.query('DELETE FROM collections WHERE id=$1', [id]);
+    } else if (this.db) {
+      this.db.prepare('DELETE FROM atoms WHERE collection_id=?').run(id);
+      this.db.prepare('DELETE FROM sources WHERE collection_id=?').run(id);
+      this.db.prepare('DELETE FROM intelligence WHERE collection_id=?').run(id);
+      this.db.prepare('DELETE FROM collections WHERE id=?').run(id);
+    }
+    if (this.qdrantReady) {
+      try { await this.qdrant.deleteCollection(this._qName(id)); console.log(`  Qdrant: deleted ${this._qName(id)}`); }
+      catch (err) { console.log(`  Qdrant delete note: ${err.message}`); }
+    }
+    console.log(`  Deleted collection: ${id}`);
   }
 
   // ── Sources ────────────────────────────────────────────────────────────────
@@ -318,20 +298,10 @@ class Store {
       } catch (err) { await client.query('ROLLBACK'); throw err; }
       finally { client.release(); }
     } else if (this.db) {
-      const stmt = this.db.prepare(`INSERT OR REPLACE INTO atoms
-        (id,source_id,collection_id,text,atom_index,atom_type,atom_confidence,
-         start_time,end_time,page_number,speaker,
-         d_persona,d_buying_stage,d_emotional_driver,d_evidence_type,d_credibility,d_recency,
-         embedding)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      const stmt = this.db.prepare(`INSERT OR REPLACE INTO atoms (id,source_id,collection_id,text,atom_index,atom_type,atom_confidence,start_time,end_time,page_number,speaker,d_persona,d_buying_stage,d_emotional_driver,d_evidence_type,d_credibility,d_recency,embedding) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
       const tx = this.db.transaction(items => {
         for (const a of items) {
-          stmt.run(a.id, sourceId, collectionId, a.text,
-            a.atomIndex||0, a.atomType||'general', a.confidence||1.0,
-            a.startTime||0, a.endTime||0, a.pageNumber||0, a.speaker||null,
-            a.d_persona||'', a.d_buying_stage||'', a.d_emotional_driver||'',
-            a.d_evidence_type||'', a.d_credibility||3, a.d_recency||'',
-            a.embedding ? JSON.stringify(a.embedding) : null);
+          stmt.run(a.id, sourceId, collectionId, a.text, a.atomIndex||0, a.atomType||'general', a.confidence||1.0, a.startTime||0, a.endTime||0, a.pageNumber||0, a.speaker||null, a.d_persona||'', a.d_buying_stage||'', a.d_emotional_driver||'', a.d_evidence_type||'', a.d_credibility||3, a.d_recency||'', a.embedding ? JSON.stringify(a.embedding) : null);
         }
       });
       tx(atoms);

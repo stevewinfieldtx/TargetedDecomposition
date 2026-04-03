@@ -80,6 +80,23 @@ app.get('/collections/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.delete('/collections/:id', auth, async (req, res) => {
+  try {
+    await engine.deleteCollection(req.params.id);
+    res.json({ ok: true, deleted: req.params.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin/nuke', auth, async (req, res) => {
+  try {
+    const collections = await engine.listCollections();
+    for (const col of collections) {
+      await engine.deleteCollection(col.id);
+    }
+    res.json({ ok: true, deleted: collections.length, message: 'All collections wiped' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Sources & Atoms ─────────────────────────────────────────────────────────
 
 app.get('/sources/:collectionId', auth, async (req, res) => {
