@@ -44,6 +44,15 @@ app.get('/health', (req, res) => {
   });
 });
 
+// ── Templates ────────────────────────────────────────────────────────────────
+
+app.get('/templates', auth, (req, res) => {
+  const templates = Object.entries(config.TEMPLATES).map(([id, t]) => ({
+    id, name: t.name, description: t.description, extractors: t.extractors,
+  }));
+  res.json(templates);
+});
+
 // ── Collections ─────────────────────────────────────────────────────────────
 
 app.get('/collections', auth, async (req, res) => {
@@ -53,9 +62,11 @@ app.get('/collections', auth, async (req, res) => {
 
 app.post('/collections', auth, async (req, res) => {
   try {
-    const { id, name, description } = req.body;
+    const { id, name, description, templateId } = req.body;
     if (!id || !name) return res.status(400).json({ error: 'id and name required' });
-    const col = await engine.createCollection(id, name, description || '');
+    const template = config.TEMPLATES[templateId] || config.TEMPLATES.default;
+    const metadata = { template, templateId: template.id };
+    const col = await engine.createCollection(id, name, description || '', metadata);
     res.json({ ok: true, collection: col });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

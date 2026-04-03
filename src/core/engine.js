@@ -35,8 +35,8 @@ class TDEngine {
 
   // ── Collections ──────────────────────────────────────────────────────────────
 
-  createCollection(id, name, description = '') {
-    return this.store.createCollection(id, name, description);
+  createCollection(id, name, description = '', metadata = {}) {
+    return this.store.createCollection(id, name, description, metadata);
   }
   getCollection(id)    { return this.store.getCollection(id); }
   listCollections()    { return this.store.listCollections(); }
@@ -167,7 +167,7 @@ class TDEngine {
         if (result) { result.status === 'ready' ? results.ingested++ : results.skipped++; }
         else { results.errors++; }
       } catch (err) { console.error(`  Error: ${err.message}`); results.errors++; }
-      if (i < videoList.length - 1) await sleep(1000);
+      if (i < videoList.length - 1) await sleep(5000);
     }
     console.log(`\n  Channel complete: ${results.ingested}/${results.total} ingested`);
     return results;

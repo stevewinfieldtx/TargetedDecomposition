@@ -11,8 +11,6 @@
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
 .mono{font-family:'JetBrains Mono',monospace}
 .shell{display:flex;min-height:100vh}
-
-/* Sidebar */
 .sidebar{width:256px;flex-shrink:0;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:0}
 .brand{padding:20px 20px 16px;border-bottom:1px solid var(--border)}
 .brand h1{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;letter-spacing:-.2px}
@@ -26,15 +24,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .nav-item.active{background:rgba(59,130,246,.12);color:var(--blue)}
 .nav-item .ico{font-size:15px;width:18px;text-align:center}
 .badge{margin-left:auto;font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--hover);padding:2px 6px;border-radius:99px;color:var(--dim)}
-
-/* Main */
 .main{flex:1;padding:28px 32px;overflow-y:auto;max-height:100vh}
 .ph{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
 .ph h2{font-size:20px;font-weight:700;letter-spacing:-.3px}
 .ph .sub{color:var(--muted);font-size:12px;margin-top:3px}
 .ha{display:flex;gap:8px;align-items:center}
-
-/* Cards */
 .grid4{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px}
 .kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;transition:border-color .2s}
 .kpi:hover{border-color:var(--border2)}
@@ -42,8 +36,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .kpi .val{font-size:26px;font-weight:700;font-family:'JetBrains Mono',monospace;letter-spacing:-1px}
 .kpi .sub{font-size:11px;color:var(--muted);margin-top:3px}
 .kpi.green .val{color:var(--green)}.kpi.blue .val{color:var(--blue)}.kpi.amber .val{color:var(--amber)}.kpi.purple .val{color:var(--purple)}.kpi.cyan .val{color:var(--cyan)}
-
-/* Panel */
 .panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:18px}
 .panel-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .panel-hdr h3{font-size:13px;font-weight:700}
@@ -52,30 +44,20 @@ th{text-align:left;padding:9px 18px;font-size:9px;font-weight:700;text-transform
 td{padding:11px 18px;font-size:12px;border-bottom:1px solid var(--border);color:var(--muted)}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:var(--hover)}
-
-/* Buttons */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--rs);font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;border:1px solid var(--border);background:var(--card);color:var(--text);transition:all .12s}
 .btn:hover{background:var(--hover);border-color:var(--border2)}
 .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.primary:hover{background:#2563eb}
 .btn.green{background:var(--green);border-color:var(--green);color:#000}.btn.green:hover{opacity:.9}
 .btn.sm{padding:4px 9px;font-size:11px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
-
-/* Inputs */
 .ig{margin-bottom:13px}
 .ig label{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin-bottom:5px}
 input[type=text],input[type=url],input[type=password],select,textarea{width:100%;padding:9px 12px;background:var(--input);border:1px solid var(--border);border-radius:var(--rs);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;transition:border-color .12s;resize:vertical}
 input:focus,select:focus,textarea:focus{border-color:var(--blue)}
 textarea{min-height:80px}
-
-/* Log */
 .log{background:var(--input);border:1px solid var(--border);border-radius:var(--rs);padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);max-height:280px;overflow-y:auto;line-height:1.9;white-space:pre-wrap}
 .ok{color:var(--green)}.err{color:var(--red)}.info{color:var(--blue)}.warn{color:var(--amber)}
-
-/* Grid */
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-
-/* Tags */
 .tag{display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:600;font-family:'JetBrains Mono',monospace}
 .tag.green{background:rgba(34,197,94,.12);color:var(--green)}
 .tag.blue{background:rgba(59,130,246,.12);color:var(--blue)}
@@ -83,46 +65,32 @@ textarea{min-height:80px}
 .tag.red{background:rgba(239,68,68,.12);color:var(--red)}
 .tag.purple{background:rgba(168,85,247,.12);color:var(--purple)}
 .tag.cyan{background:rgba(6,182,212,.12);color:var(--cyan)}
-
-/* Status dot */
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
 .dot.on{background:var(--green);box-shadow:0 0 5px rgba(34,197,94,.4)}
 .dot.off{background:var(--red)}.dot.warn{background:var(--amber)}
-
-/* Modal */
 .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center}
 .modal{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:26px;width:520px;max-width:92vw;max-height:85vh;overflow-y:auto}
 .modal h3{font-size:15px;font-weight:700;margin-bottom:18px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
-
-/* Toast */
 .toasts{position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:7px}
 .toast{padding:10px 18px;border-radius:var(--rs);font-size:12px;font-weight:500;animation:slideIn .25s ease;box-shadow:0 6px 20px rgba(0,0,0,.4)}
 .toast.success{background:var(--green);color:#000}.toast.error{background:var(--red);color:#fff}.toast.info{background:var(--blue);color:#fff}
 @keyframes slideIn{from{transform:translateX(80px);opacity:0}to{transform:translateX(0);opacity:1}}
-
-/* Drop zone */
 .dropzone{border:2px dashed var(--border);border-radius:var(--r);padding:32px;text-align:center;cursor:pointer;transition:all .15s}
 .dropzone:hover,.dropzone.over{border-color:var(--blue);background:rgba(59,130,246,.05)}
 .dropzone .ico{font-size:32px;margin-bottom:10px}
 .dropzone p{color:var(--muted);font-size:13px}
 .dropzone .hint{font-size:11px;color:var(--dim);margin-top:4px}
-
-/* Progress bar */
 .pbar{height:3px;background:var(--border);border-radius:99px;overflow:hidden;margin:6px 0}
 .pbar-fill{height:100%;background:var(--blue);transition:width .3s ease;border-radius:99px}
-
 .spinner{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{text-align:center;padding:40px;color:var(--dim)}
 .empty .ico{font-size:36px;margin-bottom:10px}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-
-/* Atom card */
 .atom-card{background:var(--input);border:1px solid var(--border);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px}
 .atom-text{font-size:13px;color:var(--text);line-height:1.5;margin-bottom:8px}
 .atom-tags{display:flex;flex-wrap:wrap;gap:4px}
-
 @media(max-width:768px){.sidebar{display:none}.main{padding:16px}.g2{grid-template-columns:1fr}}
 </style>
 </head>
@@ -135,12 +103,10 @@ const API = window.location.origin;
 let KEY = localStorage.getItem('tde_key') || '';
 let view = 'overview';
 let state = {
-  health: null, collections: [], loading: true,
+  health: null, collections: [], templates: [], loading: true,
   selectedCol: null, colDetail: null, colSources: [], colAtoms: [],
   logs: [], searchResults: [], askResult: null,
 };
-
-// ── API ──────────────────────────────────────────────────────────────────────
 
 async function api(path, opts = {}) {
   const h = { 'Content-Type': 'application/json' };
@@ -158,8 +124,6 @@ async function apiForm(path, formData) {
   return r.json();
 }
 
-// ── Log / Toast ──────────────────────────────────────────────────────────────
-
 function log(msg, type = '') {
   const ts = new Date().toLocaleTimeString();
   state.logs.unshift({ ts, msg, type });
@@ -174,13 +138,11 @@ function toast(msg, type = 'info') {
   setTimeout(() => el.remove(), 3500);
 }
 
-// ── Data Loading ─────────────────────────────────────────────────────────────
-
 async function loadAll() {
   state.loading = true; render();
   try {
-    const [health, collections] = await Promise.all([api('/health'), api('/collections').catch(() => [])]);
-    state.health = health; state.collections = collections;
+    const [health, collections, templates] = await Promise.all([api('/health'), api('/collections').catch(() => []), api('/templates').catch(() => [])]);
+    state.health = health; state.collections = collections; state.templates = templates;
     log('Connected to TDE', 'ok');
   } catch (err) { log(`Connection failed: ${err.message}`, 'err'); toast('Connection failed', 'error'); }
   state.loading = false; render();
@@ -194,12 +156,10 @@ async function loadCollection(id) {
   } catch (err) { log(`Failed: ${err.message}`, 'err'); }
 }
 
-// ── Actions ──────────────────────────────────────────────────────────────────
-
-async function createCollection(id, name, desc) {
+async function createCollection(id, name, desc, templateId) {
   try {
-    await api('/collections', { method: 'POST', body: JSON.stringify({ id, name, description: desc }) });
-    log(`Created: ${name}`, 'ok'); toast('Collection created!', 'success'); await loadAll();
+    await api('/collections', { method: 'POST', body: JSON.stringify({ id, name, description: desc, templateId }) });
+    log(`Created: ${name} (template: ${templateId})`, 'ok'); toast('Collection created!', 'success'); await loadAll();
   } catch (e) { log(`Failed: ${e.message}`, 'err'); toast('Failed', 'error'); }
 }
 
@@ -273,8 +233,6 @@ async function runAsk(collectionId, question) {
   } catch (e) { log(`Ask failed: ${e.message}`, 'err'); }
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
-
 function render() {
   document.getElementById('app').innerHTML = `
     ${sidebar()}
@@ -321,7 +279,7 @@ function nav(v, ico, label, badge) {
 
 function pageOverview() {
   const h = state.health || {};
-  const totalAtoms   = state.collections.reduce((s, c) => s + ((c.stats||{}).atomCount||0), 0);
+  const totalAtoms = state.collections.reduce((s, c) => s + ((c.stats||{}).atomCount||0), 0);
   const totalSources = state.collections.reduce((s, c) => s + ((c.stats||{}).sourceCount||0), 0);
   return `
   <div class="ph">
@@ -345,9 +303,9 @@ function pageOverview() {
       </table>
     </div>
     <div class="panel">
-      <div class="panel-hdr"><h3>Supported Input Types</h3></div>
+      <div class="panel-hdr"><h3>Templates</h3></div>
       <table>
-        ${(h.supportedTypes||['youtube','pdf','docx','pptx','audio','text','web']).map(t => `<tr><td><span class="tag blue">${t}</span></td><td style="text-align:right;color:var(--dim);font-size:11px">${typeDesc(t)}</td></tr>`).join('')}
+        ${state.templates.map(t => `<tr><td><span class="tag purple">${t.name}</span></td><td style="text-align:right;color:var(--dim);font-size:11px">${t.extractors.length} extractors</td></tr>`).join('') || '<tr><td colspan="2" style="color:var(--dim)">Loading...</td></tr>'}
       </table>
     </div>
   </div>
@@ -371,12 +329,15 @@ function pageCollections() {
   ${state.collections.length === 0
     ? `<div class="empty"><div class="ico">◫</div><p>No collections yet. Create one to get started.</p></div>`
     : `<div class="panel"><table>
-        <thead><tr><th>Name</th><th>ID</th><th>Sources</th><th>Atoms</th><th>Source Types</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Template</th><th>ID</th><th>Sources</th><th>Atoms</th><th>Source Types</th><th></th></tr></thead>
         <tbody>${state.collections.map(c => {
           const st = c.stats || {};
+          const meta = c.metadata || {};
+          const tplName = meta.template?.name || meta.templateId || 'default';
           const types = Object.entries(st.sourceTypes || {}).map(([t,n]) => `<span class="tag cyan">${t} ${n}</span>`).join(' ');
           return `<tr style="cursor:pointer" onclick="viewCol('${c.id}')">
             <td style="color:var(--text);font-weight:600">${esc(c.name)}</td>
+            <td><span class="tag purple">${esc(tplName)}</span></td>
             <td><span class="mono" style="font-size:11px;color:var(--dim)">${c.id}</span></td>
             <td>${st.sourceCount||0}</td>
             <td style="color:var(--purple);font-weight:600">${(st.atomCount||0).toLocaleString()}</td>
@@ -391,10 +352,13 @@ function pageDetail() {
   const c = state.colDetail;
   if (!c) return `<div class="empty"><div class="spinner"></div></div>`;
   const s = c.stats || {};
+  const meta = c.metadata || {};
+  const tplName = meta.template?.name || meta.templateId || 'default';
+  const extractors = meta.template?.extractors || [];
   const types = Object.entries(s.sourceTypes || {}).map(([t,n]) => `<span class="tag cyan">${t}: ${n}</span>`).join(' ');
   return `
   <div class="ph">
-    <div><h2>${esc(c.name)}</h2><div class="sub"><span class="mono">${c.id}</span></div></div>
+    <div><h2>${esc(c.name)}</h2><div class="sub"><span class="mono">${c.id}</span> · <span class="tag purple">${esc(tplName)}</span>${extractors.length ? ` · <span style="color:var(--dim);font-size:11px">${extractors.join(', ')}</span>` : ''}</div></div>
     <div class="ha">
       <button class="btn" onclick="go('collections')">← Back</button>
       <button class="btn primary" onclick="showIngestModal('${c.id}')">+ Ingest</button>
@@ -432,17 +396,14 @@ function pageIngest() {
     <div><h2>Ingest</h2><div class="sub">Feed the engine — any format, any source</div></div>
   </div>
   <div class="g2">
-    <!-- YouTube URLs -->
     <div class="panel">
       <div class="panel-hdr"><h3>📺 YouTube URLs</h3></div>
       <div style="padding:18px">
         <div class="ig"><label>Collection</label>${colSelect('yt-col')}</div>
-        <div class="ig"><label>YouTube URLs (one per line)</label><textarea id="yt-urls" placeholder="https://www.youtube.com/watch?v=...&#10;https://www.youtube.com/watch?v=...&#10;https://youtu.be/..." rows="5"></textarea></div>
+        <div class="ig"><label>YouTube URLs (one per line)</label><textarea id="yt-urls" placeholder="https://www.youtube.com/watch?v=...&#10;https://youtu.be/..." rows="5"></textarea></div>
         <button class="btn primary" onclick="doYTIngest()">⬆ Ingest URLs</button>
-        <div style="margin-top:12px;font-size:11px;color:var(--dim)">Paste any number of YouTube URLs. Each will be transcribed and atomized.</div>
       </div>
     </div>
-    <!-- YouTube Channel -->
     <div class="panel">
       <div class="panel-hdr"><h3>📡 YouTube Channel</h3></div>
       <div style="padding:18px">
@@ -452,7 +413,6 @@ function pageIngest() {
         <button class="btn primary" onclick="doChannelIngest()">⬆ Ingest Channel</button>
       </div>
     </div>
-    <!-- File Upload -->
     <div class="panel">
       <div class="panel-hdr"><h3>📁 Upload Files</h3></div>
       <div style="padding:18px">
@@ -467,17 +427,15 @@ function pageIngest() {
         <div id="file-list" style="margin-top:10px"></div>
       </div>
     </div>
-    <!-- Web URLs -->
     <div class="panel">
       <div class="panel-hdr"><h3>🌐 Web Pages</h3></div>
       <div style="padding:18px">
         <div class="ig"><label>Collection</label>${colSelect('web-col')}</div>
-        <div class="ig"><label>URLs (one per line)</label><textarea id="web-urls" placeholder="https://example.com/article&#10;https://blog.company.com/post" rows="4"></textarea></div>
+        <div class="ig"><label>URLs (one per line)</label><textarea id="web-urls" placeholder="https://example.com/article" rows="4"></textarea></div>
         <button class="btn primary" onclick="doWebIngest()">⬆ Ingest Pages</button>
       </div>
     </div>
   </div>
-  <!-- Raw Text -->
   <div class="panel">
     <div class="panel-hdr"><h3>📝 Raw Text / Transcript</h3></div>
     <div style="padding:18px">
@@ -493,7 +451,6 @@ function pageIngest() {
       <button class="btn primary" onclick="doTextIngest()">⬆ Ingest Text</button>
     </div>
   </div>
-  <!-- Activity Log -->
   <div class="panel">
     <div class="panel-hdr"><h3>Activity Log</h3></div>
     <div style="padding:14px 18px"><div class="log" id="ingest-log">${state.logs.slice(0,20).map(l=>`<div class="${l.type}"><span style="color:var(--dim)">[${l.ts}]</span> ${esc(l.msg)}</div>`).join('')||'<span style="color:var(--dim)">No activity yet</span>'}</div></div>
@@ -596,10 +553,13 @@ function pageLogs() {
   </div></div>`;
 }
 
-// ── Modals ───────────────────────────────────────────────────────────────────
-
 function showNewColModal() {
+  const tplOptions = state.templates.map(t => `<option value="${t.id}">${t.name} — ${esc(t.description)}</option>`).join('');
   const m = modal(`New Collection`,`
+    <div class="ig"><label>Template</label>
+      <select id="nc-tpl">${tplOptions || '<option value="default">TDE (General)</option>'}</select>
+      <div style="margin-top:4px;font-size:11px;color:var(--dim)" id="nc-tpl-info"></div>
+    </div>
     <div class="ig"><label>ID (url-safe, no spaces)</label><input type="text" id="nc-id" placeholder="e.g. sales-playbook-2025"></div>
     <div class="ig"><label>Name</label><input type="text" id="nc-name" placeholder="e.g. Sales Playbook 2025"></div>
     <div class="ig"><label>Description (optional)</label><input type="text" id="nc-desc" placeholder="What is this collection for?"></div>
@@ -607,6 +567,13 @@ function showNewColModal() {
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" onclick="submitNewCol()">Create</button>
     </div>`);
+  const tplSel = document.getElementById('nc-tpl');
+  const tplInfo = document.getElementById('nc-tpl-info');
+  function updateInfo() {
+    const t = state.templates.find(t => t.id === tplSel.value);
+    tplInfo.textContent = t ? 'Extractors: ' + t.extractors.join(', ') : '';
+  }
+  if (tplSel) { tplSel.addEventListener('change', updateInfo); updateInfo(); }
 }
 
 function showIngestModal(colId) {
@@ -636,8 +603,6 @@ function modal(title, body) {
 
 function closeModal() { document.getElementById('modal')?.remove(); }
 
-// ── Event Handlers ────────────────────────────────────────────────────────────
-
 function attachHandlers() {
   const dz = document.getElementById('dropzone');
   if (dz) {
@@ -662,9 +627,8 @@ function handleFiles(files) {
 }
 
 function doYTIngest() {
-  const col  = val('yt-col');
-  const urls = val('yt-urls');
-  if (!col)  { toast('Select a collection', 'error'); return; }
+  const col = val('yt-col'), urls = val('yt-urls');
+  if (!col) { toast('Select a collection', 'error'); return; }
   if (!urls) { toast('Enter at least one URL', 'error'); return; }
   ingestURLs(col, 'youtube', urls);
 }
@@ -676,16 +640,13 @@ function doChannelIngest() {
 }
 
 function doWebIngest() {
-  const col  = val('web-col');
-  const urls = val('web-urls');
+  const col = val('web-col'), urls = val('web-urls');
   if (!col || !urls) { toast('Collection and URLs required', 'error'); return; }
   ingestURLs(col, 'web', urls);
 }
 
 function doTextIngest() {
-  const col     = val('txt-col');
-  const content = val('txt-content');
-  const title   = val('txt-title') || 'Pasted Text';
+  const col = val('txt-col'), content = val('txt-content'), title = val('txt-title') || 'Pasted Text';
   if (!col || !content) { toast('Collection and text required', 'error'); return; }
   log(`Ingesting text: "${title}"`, 'info');
   api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId: col, type: 'text', input: content, opts: { title } }) })
@@ -701,10 +662,7 @@ function doFileUpload() {
 }
 
 function doSearch() {
-  const col   = val('srch-col');
-  const q     = val('srch-q');
-  const pers  = val('srch-persona');
-  const stage = val('srch-stage');
+  const col = val('srch-col'), q = val('srch-q'), pers = val('srch-persona'), stage = val('srch-stage');
   if (!col || !q) { toast('Collection and query required', 'error'); return; }
   runSearch(col, q, pers, stage);
 }
@@ -716,9 +674,9 @@ function doAsk() {
 }
 
 function submitNewCol() {
-  const id = val('nc-id'), name = val('nc-name'), desc = val('nc-desc');
+  const id = val('nc-id'), name = val('nc-name'), desc = val('nc-desc'), tpl = val('nc-tpl') || 'default';
   if (!id || !name) { toast('ID and name required', 'error'); return; }
-  closeModal(); createCollection(id, name, desc);
+  closeModal(); createCollection(id, name, desc, tpl);
 }
 
 function submitQuickIngest(colId) {
@@ -732,8 +690,6 @@ function submitQuickIngest(colId) {
 }
 
 async function saveKey() { KEY = val('key-inp'); localStorage.setItem('tde_key', KEY); try { const r = await fetch(API+'/admin/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:KEY}),credentials:'same-origin'}); if(r.ok){toast('Authenticated! Cookie set.','success');loadAll();}else{toast('Invalid key','error');}} catch(e){toast('Auth failed: '+e.message,'error');}}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function go(v) { view = v; render(); }
 
@@ -757,8 +713,6 @@ function dims(key) {
 
 function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-// ── Boot ──────────────────────────────────────────────────────────────────────
 
 render();
 loadAll();
