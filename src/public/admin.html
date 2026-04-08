@@ -399,7 +399,7 @@ function pageIngest() {
     <div class="panel">
       <div class="panel-hdr"><h3>📺 YouTube URLs</h3></div>
       <div style="padding:18px">
-        <div class="ig"><label>Collection</label>${colSelect('yt-col')}</div>
+        <div class="ig"><label>Collections (select one or more)</label>${colCheckboxes('yt')}</div>
         <div class="ig"><label>YouTube URLs (one per line)</label><textarea id="yt-urls" placeholder="https://www.youtube.com/watch?v=...&#10;https://youtu.be/..." rows="5"></textarea></div>
         <button class="btn primary" onclick="doYTIngest()">⬆ Ingest URLs</button>
       </div>
@@ -407,7 +407,7 @@ function pageIngest() {
     <div class="panel">
       <div class="panel-hdr"><h3>📡 YouTube Channel</h3></div>
       <div style="padding:18px">
-        <div class="ig"><label>Collection</label>${colSelect('ch-col')}</div>
+        <div class="ig"><label>Collections (select one or more)</label>${colCheckboxes('ch')}</div>
         <div class="ig"><label>Channel URL or @handle</label><input type="url" id="ch-url" placeholder="https://www.youtube.com/@channelname"></div>
         <div class="ig"><label>Max Videos</label><input type="text" id="ch-max" value="50" style="width:80px"></div>
         <button class="btn primary" onclick="doChannelIngest()">⬆ Ingest Channel</button>
@@ -430,8 +430,9 @@ function pageIngest() {
     <div class="panel">
       <div class="panel-hdr"><h3>🌐 Web Pages</h3></div>
       <div style="padding:18px">
-        <div class="ig"><label>Collection</label>${colSelect('web-col')}</div>
+        <div class="ig"><label>Collections (select one or more)</label>${colCheckboxes('web')}</div>
         <div class="ig"><label>URLs (one per line)</label><textarea id="web-urls" placeholder="https://example.com/article" rows="4"></textarea></div>
+        <div class="ig" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="web-crawl"><label for="web-crawl" style="margin:0;font-size:12px">Crawl entire site (follow all links under this URL)</label><input type="text" id="web-max-pages" value="50" style="width:60px;font-size:11px" placeholder="max pages"></div>
         <button class="btn primary" onclick="doWebIngest()">⬆ Ingest Pages</button>
       </div>
     </div>
@@ -696,6 +697,19 @@ function go(v) { view = v; render(); }
 function viewCol(id) {
   state.selectedCol = id; state.colDetail = null; state.colSources = [];
   view = 'detail'; render(); loadCollection(id);
+}
+
+function colCheckboxes(prefix) {
+  if (!state.collections.length) return '<div style="color:var(--dim);font-size:12px">No collections yet</div>';
+  return '<div class="col-checks" id="' + prefix + '-checks" style="display:flex;flex-wrap:wrap;gap:6px">' + state.collections.map(c => {
+    const meta = c.metadata || {};
+    const tpl = meta.template ? meta.template.name : (meta.templateId || '');
+    return '<label style="display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--card);border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer"><input type="checkbox" name="' + prefix + '" value="' + c.id + '"> ' + esc(c.name) + (tpl ? ' <span style="color:var(--purple);font-size:10px">' + esc(tpl) + '</span>' : '') + '</label>';
+  }).join('') + '</div>';
+}
+
+function getCheckedCols(prefix) {
+  return Array.from(document.querySelectorAll('input[name="' + prefix + '"]:checked')).map(c => c.value);
 }
 
 function colSelect(id) {

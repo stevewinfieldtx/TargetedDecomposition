@@ -24,18 +24,14 @@ const uploadDir = path.join(config.DATA_DIR, 'uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({ dest: uploadDir, limits: { fileSize: 100 * 1024 * 1024 } });
 
-// Auth disabled — re-enable later for external API callers
 function auth(req, res, next) { next(); }
 
 // ── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
   res.json({
-    status: 'ok',
-    engine: 'TDE — Targeted Decomposition Engine',
-    version: '2.0.1',
-    hasOpenRouter: !!config.OPENROUTER_API_KEY,
-    hasYouTubeAPI: !!config.YOUTUBE_API_KEY,
+    status: 'ok', engine: 'TDE — Targeted Decomposition Engine', version: '2.0.2',
+    hasOpenRouter: !!config.OPENROUTER_API_KEY, hasYouTubeAPI: !!config.YOUTUBE_API_KEY,
     hasGroq: !!config.GROQ_API_KEY,
     vectorStore: engine.store.qdrantReady ? 'qdrant' : 'sqlite',
     qdrantConnected: engine.store.qdrantReady,
@@ -56,8 +52,18 @@ app.get('/templates', auth, (req, res) => {
 // ── Collections ─────────────────────────────────────────────────────────────
 
 app.get('/collections', auth, async (req, res) => {
-  try { res.json(await engine.listCollections()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const collections = await engine.listCollections();
+    const withStats = await Promise.all(collections.map(async (col) => {
+      try {
+        const stats = await engine.getStats(col.id);
+        return { ...col, stats };
+      } catch {
+        return { ...col, stats: { sourceCount: 0, atomCount: 0 } };
+      }
+    }));
+    res.json(withStats);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/collections', auth, async (req, res) => {
@@ -90,9 +96,7 @@ app.delete('/collections/:id', auth, async (req, res) => {
 app.post('/admin/nuke', auth, async (req, res) => {
   try {
     const collections = await engine.listCollections();
-    for (const col of collections) {
-      await engine.deleteCollection(col.id);
-    }
+    for (const col of collections) { await engine.deleteCollection(col.id); }
     res.json({ ok: true, deleted: collections.length, message: 'All collections wiped' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -120,13 +124,16 @@ app.get('/atoms/:collectionId', auth, async (req, res) => {
 
 app.post('/ingest', auth, async (req, res) => {
   try {
-    const { collectionId, type, input, opts } = req.body;
-    if (!collectionId || !type || !input)
-      return res.status(400).json({ error: 'collectionId, type, and input required' });
-    res.json({ ok: true, status: 'ingestion_started', collectionId, type, input: input.slice(0, 100) });
-    engine.ingest(collectionId, type, input, opts || {})
-      .then(r => console.log(`  Ingest complete: ${r?.title}`))
-      .catch(err => console.error(`  Ingest error: ${err.message}`));
+    const { collectionId, collectionIds, type, input, opts } = req.body;
+    const targets = collectionIds || (collectionId ? [collectionId] : []);
+    if (!targets.length || !type || !input)
+      return res.status(400).json({ error: 'collectionId(s), type, and input required' });
+    res.json({ ok: true, status: 'ingestion_started', collectionIds: targets, type, input: input.slice(0, 100) });
+    for (const colId of targets) {
+      engine.ingest(colId, type, input, opts || {})
+        .then(r => console.log(`  Ingest complete [${colId}]: ${r?.title}`))
+        .catch(err => console.error(`  Ingest error [${colId}]: ${err.message}`));
+    }
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -144,13 +151,43 @@ app.post('/ingest/batch', auth, async (req, res) => {
 
 app.post('/ingest/channel', auth, async (req, res) => {
   try {
-    const { collectionId, channelUrl, maxVideos } = req.body;
-    if (!collectionId || !channelUrl)
-      return res.status(400).json({ error: 'collectionId and channelUrl required' });
-    res.json({ ok: true, status: 'channel_ingest_started', collectionId, channelUrl, maxVideos: maxVideos || 50 });
-    engine.ingestChannel(collectionId, channelUrl, maxVideos || 50)
-      .then(r => console.log(`  Channel complete:`, r))
-      .catch(err => console.error(`  Channel error: ${err.message}`));
+    const { collectionId, collectionIds, channelUrl, maxVideos } = req.body;
+    const targets = collectionIds || (collectionId ? [collectionId] : []);
+    if (!targets.length || !channelUrl)
+      return res.status(400).json({ error: 'collectionId(s) and channelUrl required' });
+    res.json({ ok: true, status: 'channel_ingest_started', collectionIds: targets, channelUrl, maxVideos: maxVideos || 50 });
+    for (const colId of targets) {
+      console.log(`  Channel ingest into: ${colId}`);
+      engine.ingestChannel(colId, channelUrl, maxVideos || 50)
+        .then(r => console.log(`  Channel complete [${colId}]:`, r))
+        .catch(err => console.error(`  Channel error [${colId}]: ${err.message}`));
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Site Crawl ──────────────────────────────────────────────────────────────
+
+app.post('/ingest/crawl', auth, async (req, res) => {
+  try {
+    const { collectionId, collectionIds, url, maxPages } = req.body;
+    const targets = collectionIds || (collectionId ? [collectionId] : []);
+    if (!targets.length || !url)
+      return res.status(400).json({ error: 'collectionId(s) and url required' });
+    res.json({ ok: true, status: 'crawl_started', collectionIds: targets, url, maxPages: maxPages || 50 });
+    const { crawlSite } = require('./ingest/web');
+    crawlSite(url, maxPages || 50).then(async (pages) => {
+      console.log('  Crawl returned ' + pages.length + ' pages');
+      for (const colId of targets) {
+        for (let i = 0; i < pages.length; i++) {
+          const page = pages[i];
+          console.log('  [' + colId + '] Ingesting page ' + (i+1) + '/' + pages.length + ': ' + page.title.slice(0,50));
+          try {
+            await engine.ingest(colId, 'web', page.sourceUrl, { title: page.title });
+          } catch (err) { console.error('  Page error: ' + err.message); }
+        }
+      }
+      console.log('  Crawl ingest complete: ' + pages.length + ' pages into ' + targets.length + ' collection(s)');
+    }).catch(err => console.error('  Crawl error: ' + err.message));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -162,10 +199,8 @@ app.post('/upload/:collectionId', auth, upload.array('files', 50), async (req, r
     const context = req.body.context || '';
     if (!req.files || !req.files.length)
       return res.status(400).json({ error: 'No files uploaded' });
-
     const col = await engine.getCollection(collectionId);
     if (!col) return res.status(404).json({ error: 'Collection not found' });
-
     const items = req.files.map(file => {
       const ext = path.extname(file.originalname).toLowerCase().slice(1);
       const typeMap = { pdf: 'pdf', docx: 'docx', doc: 'docx', pptx: 'pptx', ppt: 'pptx',
@@ -176,7 +211,6 @@ app.post('/upload/:collectionId', auth, upload.array('files', 50), async (req, r
       fs.renameSync(file.path, newPath);
       return { type, input: newPath, opts: { title: file.originalname } };
     });
-
     res.json({ ok: true, status: 'upload_started', count: items.length, files: req.files.map(f => f.originalname) });
     engine.ingestBatch(collectionId, items, context)
       .then(r => console.log(`  Upload batch complete: ${r.ingested}/${r.total}`))
@@ -240,18 +274,61 @@ app.get('/intelligence/:collectionId', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Deploy Agent (ElevenLabs) ───────────────────────────────────────────────
+
+app.post('/deploy-agent/:collectionId', auth, async (req, res) => {
+  try {
+    const col = await engine.getCollection(req.params.collectionId);
+    if (!col) return res.status(404).json({ error: 'Collection not found' });
+    const atoms = await engine.getAtoms(req.params.collectionId);
+    if (!atoms.length) return res.status(400).json({ error: 'No atoms in collection — ingest content first' });
+    const meta = col.metadata || {};
+    const colName = col.name || req.params.collectionId;
+
+    // Build knowledge from atoms
+    const knowledge = atoms.map(a => a.text).filter(t => t && t.length > 30);
+
+    // Build system prompt
+    const knowledgeBlock = knowledge.map(k => `- ${k}`).join('\n');
+    const prompt = `You are an AI assistant for "${colName}". You speak with authority and practical knowledge based on the content you've been trained on.
+
+Your personality: Professional but approachable. You explain matters in clear, everyday language. You draw from real experiences and specific examples. You are direct and honest.
+
+CRITICAL RULES:
+- ONLY answer questions using the knowledge provided below
+- If asked something outside your knowledge, say you don't have that specific information
+- Never make things up — stick to what you know
+- Be specific — cite actual numbers, examples, and facts from your knowledge
+
+YOUR KNOWLEDGE BASE:
+${knowledgeBlock}
+
+When answering: be specific, be practical, be honest, keep it conversational.`;
+
+    res.json({
+      ok: true,
+      collectionId: req.params.collectionId,
+      collectionName: colName,
+      atomCount: knowledge.length,
+      promptLength: prompt.length,
+      prompt: prompt,
+      embedCode: `<!-- Add agent_id after creating the ElevenLabs agent -->\n<script src="https://elevenlabs.io/convai-widget/index.js" async data-agent-id="YOUR_AGENT_ID"></script>`,
+      instructions: 'Use the prompt above as the system prompt when creating an ElevenLabs agent. The embed code goes on any website.'
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Admin UI ─────────────────────────────────────────────────────────────────
 
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// Fallback
 app.use((req, res) => { res.status(404).json({ error: 'Not found', hint: 'See /health for available endpoints' }); });
 
 app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`  TDE — Targeted Decomposition Engine v2.0.1`);
+  console.log(`  TDE — Targeted Decomposition Engine v2.0.2`);
   console.log(`  Port:        ${config.PORT}`);
   console.log(`  OpenRouter:  ${config.OPENROUTER_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  YouTube API: ${config.YOUTUBE_API_KEY ? 'YES' : 'NO'}`);
