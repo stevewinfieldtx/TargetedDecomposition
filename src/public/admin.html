@@ -92,6 +92,21 @@ textarea{min-height:80px}
 .atom-text{font-size:13px;color:var(--text);line-height:1.5;margin-bottom:8px}
 .atom-tags{display:flex;flex-wrap:wrap;gap:4px}
 @media(max-width:768px){.sidebar{display:none}.main{padding:16px}.g2{grid-template-columns:1fr}}
+
+.col-grid{display:flex;flex-wrap:wrap;gap:6px}
+.col-chip{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--input);border:1.5px solid var(--border);border-radius:8px;font-size:12px;cursor:pointer;transition:all .15s;user-select:none}
+.col-chip:hover{border-color:var(--blue);background:rgba(59,130,246,.04)}
+.col-chip:has(input:checked){border-color:var(--blue);background:rgba(59,130,246,.1);box-shadow:0 0 0 1px rgba(59,130,246,.2)}
+.col-chip input{accent-color:var(--blue)}
+.col-chip-name{font-weight:600;color:var(--text)}
+.col-chip-tpl{font-size:9px;color:var(--purple);background:rgba(168,85,247,.1);padding:1px 6px;border-radius:99px}
+.col-chip-atoms{font-size:10px;color:var(--dim);font-family:'JetBrains Mono',monospace}
+.target-bar{margin-top:12px;padding:8px 14px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.15);border-radius:var(--rs);font-size:12px;font-weight:500;color:var(--blue);align-items:center;gap:8px}
+.target-ico{font-size:14px;opacity:.6}
+.ingest-sections{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.ingest-sections .panel{margin-bottom:0}
+.panel-hint{font-size:11px;color:var(--dim);font-weight:400}
+@media(max-width:900px){.ingest-sections{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -391,33 +406,69 @@ function pageDetail() {
 }
 
 function pageIngest() {
+  const colList = state.collections;
+  const colItems = colList.map(c => {
+    const meta = c.metadata || {};
+    const tpl = meta.template ? meta.template.name : (meta.templateId || '');
+    const atoms = c.stats ? (c.stats.atomCount || 0) : 0;
+    return `<label class="col-chip"><input type="checkbox" name="ingest-col" value="${c.id}" onchange="updateIngestTarget()"> <span class="col-chip-name">${esc(c.name)}</span>${tpl ? `<span class="col-chip-tpl">${esc(tpl)}</span>` : ''}<span class="col-chip-atoms">${atoms}</span></label>`;
+  }).join('');
+
   return `
   <div class="ph">
-    <div><h2>Ingest</h2><div class="sub">Feed the engine — any format, any source</div></div>
+    <div><h2>Ingest</h2><div class="sub">Feed the engine — select where it goes, then add content</div></div>
+    <div class="ha"><button class="btn" onclick="loadAll()">↻ Refresh</button></div>
   </div>
-  <div class="g2">
-    <div class="panel">
-      <div class="panel-hdr"><h3>📺 YouTube URLs</h3></div>
-      <div style="padding:18px">
-        <div class="ig"><label>Collections (select one or more)</label>${colCheckboxes('yt')}</div>
-        <div class="ig"><label>YouTube URLs (one per line)</label><textarea id="yt-urls" placeholder="https://www.youtube.com/watch?v=...&#10;https://youtu.be/..." rows="5"></textarea></div>
-        <button class="btn primary" onclick="doYTIngest()">⬆ Ingest URLs</button>
+
+  <!-- ═══ DESTINATION ═══ -->
+  <div class="panel" style="border-color:var(--blue);border-width:1.5px">
+    <div class="panel-hdr" style="background:rgba(59,130,246,.06)">
+      <h3>📍 Destination Collections</h3>
+      <button class="btn sm" onclick="showNewColModal()">+ New Collection</button>
+    </div>
+    <div style="padding:16px 18px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Select one or more collections. All content below will be ingested into every selected collection.</div>
+      ${colList.length ? `<div class="col-grid">${colItems}</div>` : '<div style="color:var(--dim);font-size:12px;padding:20px;text-align:center">No collections yet — create one above</div>'}
+      <div id="ingest-target-bar" class="target-bar" style="display:none">
+        <span class="target-ico">→</span>
+        <span id="ingest-target-text">No collections selected</span>
       </div>
     </div>
+  </div>
+
+  <!-- ═══ CONTENT SECTIONS ═══ -->
+  <div class="ingest-sections">
+
+    <!-- URLs (Web + YouTube auto-detected) -->
     <div class="panel">
-      <div class="panel-hdr"><h3>📡 YouTube Channel</h3></div>
-      <div style="padding:18px">
-        <div class="ig"><label>Collections (select one or more)</label>${colCheckboxes('ch')}</div>
-        <div class="ig"><label>Channel URL or @handle</label><input type="url" id="ch-url" placeholder="https://www.youtube.com/@channelname"></div>
-        <div class="ig"><label>Max Videos</label><input type="text" id="ch-max" value="50" style="width:80px"></div>
-        <button class="btn primary" onclick="doChannelIngest()">⬆ Ingest Channel</button>
+      <div class="panel-hdr"><h3>🔗 URLs</h3><span class="panel-hint">Web pages and YouTube videos — auto-detected</span></div>
+      <div style="padding:16px 18px">
+        <div class="ig"><label>URLs (one per line)</label><textarea id="url-input" placeholder="https://www.youtube.com/watch?v=abc123&#10;https://example.com/product-page&#10;https://youtu.be/xyz789&#10;https://competitor.com/pricing" rows="5"></textarea></div>
+        <div class="url-options" style="display:flex;gap:16px;align-items:center;margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer"><input type="checkbox" id="url-crawl"> Crawl web pages (follow links)</label>
+          <div style="display:flex;align-items:center;gap:5px"><label style="font-size:11px;color:var(--dim);margin:0">Max pages:</label><input type="text" id="url-crawl-max" value="50" style="width:55px;padding:4px 8px;font-size:11px"></div>
+        </div>
+        <button class="btn primary" onclick="doURLIngest()">⬆ Ingest URLs</button>
       </div>
     </div>
+
+    <!-- YouTube Channel -->
     <div class="panel">
-      <div class="panel-hdr"><h3>📁 Upload Files</h3></div>
-      <div style="padding:18px">
-        <div class="ig"><label>Collection</label>${colSelect('file-col')}</div>
-        <div class="ig"><label>Context (optional)</label><input type="text" id="file-ctx" placeholder="e.g. B2B sales training webinar"></div>
+      <div class="panel-hdr"><h3>📺 YouTube Channel</h3><span class="panel-hint">Batch-ingest all videos from a channel</span></div>
+      <div style="padding:16px 18px">
+        <div style="display:flex;gap:12px">
+          <div class="ig" style="flex:1"><label>Channel URL or @handle</label><input type="url" id="channel-url" placeholder="https://www.youtube.com/@channelname"></div>
+          <div class="ig" style="width:90px"><label>Max Videos</label><input type="text" id="channel-max" value="50"></div>
+        </div>
+        <button class="btn primary" onclick="doChannelIngestNew()">⬆ Ingest Channel</button>
+      </div>
+    </div>
+
+    <!-- Documents (Upload) -->
+    <div class="panel">
+      <div class="panel-hdr"><h3>📁 Documents</h3><span class="panel-hint">PDF, Word, PowerPoint, Audio, Text</span></div>
+      <div style="padding:16px 18px">
+        <div class="ig"><label>Context (optional — helps the tagger understand the content)</label><input type="text" id="upload-ctx" placeholder="e.g. SAP Business One implementation guides"></div>
         <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
           <div class="ico">⬆</div>
           <p>Drop files here or click to browse</p>
@@ -427,34 +478,22 @@ function pageIngest() {
         <div id="file-list" style="margin-top:10px"></div>
       </div>
     </div>
+
+    <!-- Raw Text -->
     <div class="panel">
-      <div class="panel-hdr"><h3>🌐 Web Pages</h3></div>
-      <div style="padding:18px">
-        <div class="ig"><label>Collections (select one or more)</label>${colCheckboxes('web')}</div>
-        <div class="ig"><label>URLs (one per line)</label><textarea id="web-urls" placeholder="https://example.com/article" rows="4"></textarea></div>
-        <div class="ig" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="web-crawl"><label for="web-crawl" style="margin:0;font-size:12px">Crawl entire site (follow all links under this URL)</label><input type="text" id="web-max-pages" value="50" style="width:60px;font-size:11px" placeholder="max pages"></div>
-        <button class="btn primary" onclick="doWebIngest()">⬆ Ingest Pages</button>
+      <div class="panel-hdr"><h3>📝 Paste Text</h3><span class="panel-hint">Raw text, transcripts, meeting notes, research</span></div>
+      <div style="padding:16px 18px">
+        <div class="ig"><label>Title</label><input type="text" id="text-title" placeholder="e.g. Q3 Sales Call Transcript"></div>
+        <div class="ig"><label>Content</label><textarea id="text-content" rows="5" placeholder="Paste any text, transcript, meeting notes, research..."></textarea></div>
+        <button class="btn primary" onclick="doTextIngestNew()">⬆ Ingest Text</button>
       </div>
     </div>
   </div>
-  <div class="panel">
-    <div class="panel-hdr"><h3>📝 Raw Text / Transcript</h3></div>
-    <div style="padding:18px">
-      <div class="g2">
-        <div>
-          <div class="ig"><label>Collection</label>${colSelect('txt-col')}</div>
-          <div class="ig"><label>Title</label><input type="text" id="txt-title" placeholder="e.g. Q3 Sales Call Transcript"></div>
-        </div>
-        <div>
-          <div class="ig"><label>Paste Text or Transcript</label><textarea id="txt-content" rows="6" placeholder="Paste any text, transcript, meeting notes, etc..."></textarea></div>
-        </div>
-      </div>
-      <button class="btn primary" onclick="doTextIngest()">⬆ Ingest Text</button>
-    </div>
-  </div>
+
+  <!-- Activity Log -->
   <div class="panel">
     <div class="panel-hdr"><h3>Activity Log</h3></div>
-    <div style="padding:14px 18px"><div class="log" id="ingest-log">${state.logs.slice(0,20).map(l=>`<div class="${l.type}"><span style="color:var(--dim)">[${l.ts}]</span> ${esc(l.msg)}</div>`).join('')||'<span style="color:var(--dim)">No activity yet</span>'}</div></div>
+    <div style="padding:14px 18px"><div class="log" id="ingest-log">${state.logs.slice(0,20).map(l=>'<div class="'+l.type+'"><span style="color:var(--dim)">['+l.ts+']</span> '+esc(l.msg)+'</div>').join('')||'<span style="color:var(--dim)">No activity yet</span>'}</div></div>
   </div>`;
 }
 
@@ -627,39 +666,108 @@ function handleFiles(files) {
   }
 }
 
-function doYTIngest() {
-  const col = val('yt-col'), urls = val('yt-urls');
-  if (!col) { toast('Select a collection', 'error'); return; }
-  if (!urls) { toast('Enter at least one URL', 'error'); return; }
-  ingestURLs(col, 'youtube', urls);
+function getSelectedCollections() {
+  return Array.from(document.querySelectorAll('input[name="ingest-col"]:checked')).map(c => c.value);
 }
 
-function doChannelIngest() {
-  const col = val('ch-col'), url = val('ch-url'), max = val('ch-max');
-  if (!col || !url) { toast('Collection and channel URL required', 'error'); return; }
-  ingestChannel(col, url, max || 50);
+function updateIngestTarget() {
+  const cols = getSelectedCollections();
+  const bar = document.getElementById('ingest-target-bar');
+  const text = document.getElementById('ingest-target-text');
+  if (!bar || !text) return;
+  if (cols.length === 0) {
+    bar.style.display = 'none';
+  } else {
+    bar.style.display = 'flex';
+    const names = cols.map(id => { const c = state.collections.find(x => x.id === id); return c ? c.name : id; });
+    text.textContent = 'Ingesting into: ' + names.join(' + ');
+  }
 }
 
-function doWebIngest() {
-  const col = val('web-col'), urls = val('web-urls');
-  if (!col || !urls) { toast('Collection and URLs required', 'error'); return; }
-  ingestURLs(col, 'web', urls);
+function doURLIngest() {
+  const cols = getSelectedCollections();
+  if (!cols.length) { toast('Select at least one collection', 'error'); return; }
+  const raw = val('url-input');
+  if (!raw) { toast('Enter at least one URL', 'error'); return; }
+  const urls = raw.split('\n').map(u => u.trim()).filter(u => u.length > 5);
+  const crawl = document.getElementById('url-crawl')?.checked;
+  const maxPages = parseInt(val('url-crawl-max')) || 50;
+
+  // Separate YouTube URLs from web URLs
+  const ytUrls = urls.filter(u => u.includes('youtube.com') || u.includes('youtu.be'));
+  const webUrls = urls.filter(u => !u.includes('youtube.com') && !u.includes('youtu.be'));
+
+  for (const col of cols) {
+    // YouTube URLs
+    if (ytUrls.length === 1) {
+      api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId: col, type: 'youtube', input: ytUrls[0] }) })
+        .then(() => { log('YouTube queued → ' + col, 'ok'); toast('YouTube queued!', 'success'); })
+        .catch(e => { log('Error: ' + e.message, 'err'); });
+    } else if (ytUrls.length > 1) {
+      const items = ytUrls.map(u => ({ type: 'youtube', input: u }));
+      api('/ingest/batch', { method: 'POST', body: JSON.stringify({ collectionId: col, items }) })
+        .then(() => { log(ytUrls.length + ' YouTube URLs queued → ' + col, 'ok'); })
+        .catch(e => { log('Error: ' + e.message, 'err'); });
+    }
+
+    // Web URLs
+    if (webUrls.length && crawl) {
+      for (const url of webUrls) {
+        api('/ingest/crawl', { method: 'POST', body: JSON.stringify({ collectionId: col, url, maxPages }) })
+          .then(() => { log('Crawl queued: ' + url.slice(0,50) + ' → ' + col, 'ok'); })
+          .catch(e => { log('Crawl error: ' + e.message, 'err'); });
+      }
+    } else if (webUrls.length === 1) {
+      api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId: col, type: 'web', input: webUrls[0] }) })
+        .then(() => { log('Web queued → ' + col, 'ok'); })
+        .catch(e => { log('Error: ' + e.message, 'err'); });
+    } else if (webUrls.length > 1) {
+      const items = webUrls.map(u => ({ type: 'web', input: u }));
+      api('/ingest/batch', { method: 'POST', body: JSON.stringify({ collectionId: col, items }) })
+        .then(() => { log(webUrls.length + ' web URLs queued → ' + col, 'ok'); })
+        .catch(e => { log('Error: ' + e.message, 'err'); });
+    }
+  }
+  if (ytUrls.length + webUrls.length > 0) toast((ytUrls.length + webUrls.length) + ' URL(s) queued to ' + cols.length + ' collection(s)', 'success');
+  document.getElementById('url-input').value = '';
 }
 
-function doTextIngest() {
-  const col = val('txt-col'), content = val('txt-content'), title = val('txt-title') || 'Pasted Text';
-  if (!col || !content) { toast('Collection and text required', 'error'); return; }
-  log(`Ingesting text: "${title}"`, 'info');
-  api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId: col, type: 'text', input: content, opts: { title } }) })
-    .then(() => { log(`Text queued: "${title}"`, 'ok'); toast('Text queued!', 'success'); })
-    .catch(e  => { log(`Error: ${e.message}`, 'err'); toast('Failed', 'error'); });
+function doChannelIngestNew() {
+  const cols = getSelectedCollections();
+  if (!cols.length) { toast('Select at least one collection', 'error'); return; }
+  const url = val('channel-url');
+  if (!url) { toast('Channel URL required', 'error'); return; }
+  const max = parseInt(val('channel-max')) || 50;
+  for (const col of cols) {
+    api('/ingest/channel', { method: 'POST', body: JSON.stringify({ collectionId: col, channelUrl: url, maxVideos: max }) })
+      .then(() => { log('Channel queued → ' + col, 'ok'); })
+      .catch(e => { log('Channel error: ' + e.message, 'err'); });
+  }
+  toast('Channel ingest started to ' + cols.length + ' collection(s)', 'success');
+}
+
+function doTextIngestNew() {
+  const cols = getSelectedCollections();
+  if (!cols.length) { toast('Select at least one collection', 'error'); return; }
+  const content = val('text-content'), title = val('text-title') || 'Pasted Text';
+  if (!content) { toast('Enter some text', 'error'); return; }
+  for (const col of cols) {
+    api('/ingest', { method: 'POST', body: JSON.stringify({ collectionId: col, type: 'text', input: content, opts: { title } }) })
+      .then(() => { log('Text queued: "' + title + '" → ' + col, 'ok'); })
+      .catch(e => { log('Error: ' + e.message, 'err'); });
+  }
+  toast('Text queued to ' + cols.length + ' collection(s)', 'success');
+  document.getElementById('text-content').value = '';
 }
 
 function doFileUpload() {
-  const col = val('file-col'), ctx = val('file-ctx');
-  if (!col) { toast('Select a collection', 'error'); return; }
+  const cols = getSelectedCollections();
+  if (!cols.length) { toast('Select at least one collection', 'error'); return; }
   if (!selectedFiles.length) { toast('No files selected', 'error'); return; }
-  uploadFiles(col, selectedFiles, ctx);
+  const ctx = val('upload-ctx');
+  for (const col of cols) {
+    uploadFiles(col, selectedFiles, ctx);
+  }
 }
 
 function doSearch() {
