@@ -1,5 +1,5 @@
 /**
- * TDE — REST API Server v2.0
+ * TDE — REST API Server v2.1
  * ═══════════════════════════════════════════════════════════════════
  * Deploy on Railway. Port 8400 by default.
  */
@@ -30,7 +30,7 @@ function auth(req, res, next) { next(); }
 
 app.get('/health', (req, res) => {
   res.json({
-    status: 'ok', engine: 'TDE — Targeted Decomposition Engine', version: '2.0.2',
+    status: 'ok', engine: 'TDE — Targeted Decomposition Engine', version: '2.1.0',
     hasOpenRouter: !!config.OPENROUTER_API_KEY, hasYouTubeAPI: !!config.YOUTUBE_API_KEY,
     hasGroq: !!config.GROQ_API_KEY,
     vectorStore: engine.store.qdrantReady ? 'qdrant' : 'sqlite',
@@ -222,14 +222,29 @@ app.post('/upload/:collectionId', auth, upload.array('files', 50), async (req, r
 
 app.get('/search/:collectionId', auth, async (req, res) => {
   try {
-    const { q, top_k, persona, buying_stage, evidence_type } = req.query;
+    const { q, top_k, persona, buying_stage, evidence_type, emotional_driver, credibility, recency } = req.query;
     if (!q) return res.status(400).json({ error: 'q (query) required' });
     const filters = {};
     if (persona) filters.persona = persona;
     if (buying_stage) filters.buying_stage = buying_stage;
     if (evidence_type) filters.evidence_type = evidence_type;
-    const results = await engine.search(req.params.collectionId, q, parseInt(top_k) || 10, filters);
-    res.json({ query: q, filters, count: results.length, results });
+    if (emotional_driver) filters.emotional_driver = emotional_driver;
+    if (credibility) filters.credibility = parseInt(credibility);
+    if (recency) filters.recency = recency;
+    const limit = parseInt(top_k) || 10;
+
+    // Support multi-collection search via comma-separated IDs
+    const colIds = req.params.collectionId.split(',').map(s => s.trim()).filter(Boolean);
+    let allResults = [];
+    for (const colId of colIds) {
+      try {
+        const results = await engine.search(colId, q, limit, filters);
+        allResults.push(...results.map(r => ({ ...r, collectionId: colId })));
+      } catch (err) { console.log('  Search failed for ' + colId + ': ' + err.message); }
+    }
+    allResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+    const trimmed = allResults.slice(0, limit);
+    res.json({ query: q, filters, collections: colIds, count: trimmed.length, results: trimmed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -238,6 +253,22 @@ app.post('/ask/:collectionId', auth, async (req, res) => {
     const { question, filters } = req.body;
     if (!question) return res.status(400).json({ error: 'question required' });
     const result = await engine.ask(req.params.collectionId, question, filters || {});
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Reconstruct (Targeted Recomposition) ────────────────────────────────────
+
+app.post('/reconstruct/:collectionId', auth, async (req, res) => {
+  try {
+    const { intent, query, filters, context, format, max_atoms, max_words } = req.body;
+    if (!query) return res.status(400).json({ error: 'query is required' });
+    const collectionIds = req.params.collectionId.split(',').map(s => s.trim()).filter(Boolean);
+    const result = await engine.reconstruct(collectionIds, {
+      intent: intent || 'custom', query, filters: filters || {},
+      context: context || '', format: format || 'text',
+      max_atoms: parseInt(max_atoms) || 15, max_words: parseInt(max_words) || 500,
+    });
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -328,7 +359,7 @@ app.use((req, res) => { res.status(404).json({ error: 'Not found', hint: 'See /h
 
 app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`  TDE — Targeted Decomposition Engine v2.0.2`);
+  console.log(`  TDE — Targeted Decomposition Engine v2.1.0`);
   console.log(`  Port:        ${config.PORT}`);
   console.log(`  OpenRouter:  ${config.OPENROUTER_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  YouTube API: ${config.YOUTUBE_API_KEY ? 'YES' : 'NO'}`);

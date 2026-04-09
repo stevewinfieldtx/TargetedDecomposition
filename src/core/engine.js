@@ -1,7 +1,7 @@
 /**
  * TDE — Core Engine
  * ═══════════════════════════════════════════════════════════════════
- * INGEST → EXTRACT → MUNGE → TAG → EMBED → STORE → SEARCH → SYNTHESIZE
+ * INGEST → EXTRACT → MUNGE → TAG → EMBED → STORE → SEARCH → SYNTHESIZE → RECONSTRUCT
  *
  * Universal pipeline. Feed it anything:
  *   youtube  → YouTube video URL
@@ -15,6 +15,11 @@
  *
  * Every source goes through the same pipeline after extraction:
  *   Munger → 6D Tagger → Embeddings → Store
+ *
+ * Data gets OUT via:
+ *   search()       → filtered vector search, returns ranked atoms with 6D tags
+ *   ask()          → RAG Q&A, grounded answer from atoms
+ *   reconstruct()  → targeted recomposition into deliverables (emails, briefs, questions, etc.)
  */
 
 const config  = require('../config');
@@ -30,7 +35,7 @@ const youtube = require('../ingest/youtube');
 class TDEngine {
   constructor(dataDir) {
     this.store = new Store(dataDir || config.DATA_DIR);
-    console.log('  TDEngine v2.0 initialized');
+    console.log('  TDEngine v2.1 initialized');
   }
 
   // ── Collections ──────────────────────────────────────────────────────────────
@@ -226,6 +231,121 @@ class TDEngine {
       { model: config.CONTENT_MODEL, system: `You answer questions using only provided content from the knowledge base "${col?.name || collectionId}". Be accurate and cite specific atoms.`, maxTokens: 1500, temperature: 0.3 }
     );
     return { answer: answer || 'Error generating response.', atoms: results.slice(0, 5) };
+  }
+
+  // ── Reconstruct (Targeted Recomposition) ─────────────────────────────────────
+
+  async reconstruct(collectionIds, options = {}) {
+    const {
+      intent = 'custom',
+      query,
+      filters = {},
+      context = '',
+      format = 'text',
+      max_atoms = 15,
+      max_words = 500,
+    } = options;
+
+    if (!query) throw new Error('query is required for reconstruction');
+    const cols = Array.isArray(collectionIds) ? collectionIds : [collectionIds];
+
+    console.log(`\n  Reconstruct: "${intent}" across [${cols.join(', ')}]`);
+    console.log(`  Query: ${query.slice(0, 80)}...`);
+    console.log(`  Filters: ${JSON.stringify(filters)}`);
+
+    // Step 1: Filtered search across all requested collections
+    let allResults = [];
+    for (const colId of cols) {
+      try {
+        const results = await this.search(colId, query, max_atoms, filters);
+        allResults.push(...results.map(r => ({ ...r, collectionId: colId })));
+      } catch (err) { console.log(`  Search failed for ${colId}: ${err.message}`); }
+    }
+    allResults.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+    const topAtoms = allResults.slice(0, max_atoms);
+
+    if (!topAtoms.length) {
+      return { output: 'Insufficient content in the knowledge base to fulfill this request.', atoms_used: [], atoms_available: 0, confidence: 'none', gaps: ['No atoms matched the query and filters.'] };
+    }
+    console.log(`  Retrieved ${topAtoms.length} atoms (from ${allResults.length} total matches)`);
+
+    // Step 2: Build reconstruction prompt
+    const intentPrompts = {
+      sales_email: 'Write a professional sales email. Be specific and evidence-based, referencing real capabilities and proof points from the atoms. No generic sales language. Every claim must be backed by a specific atom.',
+      competitive_brief: 'Create a competitive intelligence brief: Overview, Key Strengths, Key Weaknesses, Differentiators, Battle Cards. Ground every point in source atoms.',
+      executive_summary: 'Write a concise executive summary for C-level readers. Lead with business impact, use only high-credibility evidence, focus on strategic implications.',
+      discovery_questions: 'Generate discovery questions for a sales conversation. Each: (1) grounded in atom insights, (2) probes a real pain point, (3) includes rationale, (4) suggests what a good answer looks like.',
+      enrichment: 'Produce a structured enrichment package as JSON: "capabilities" (with evidence), "differentiators" (with proof), "proof_points" (stats, cases, quotes), "gaps" (what is missing). No filler.',
+      agent_response: 'Write a conversational response for a voice agent. Short sentences (under 20 words). Natural spoken language, not written prose. Direct and specific.',
+      objection_handling: 'Create an objection handling playbook. Per objection: state it, recommended response (from atoms), supporting evidence, follow-up question.',
+      custom: 'Fulfill the request using the provided atoms as your ONLY source material. Be specific and evidence-based.',
+    };
+    const intentInstruction = intentPrompts[intent] || intentPrompts.custom;
+
+    const atomContext = topAtoms.map((a, i) => {
+      const tags = [];
+      if (a.persona) tags.push(`Persona: ${a.persona}`);
+      if (a.buyingStage) tags.push(`Stage: ${a.buyingStage}`);
+      if (a.evidenceType) tags.push(`Evidence: ${a.evidenceType}`);
+      if (a.credibility) tags.push(`Credibility: ${a.credibility}/5`);
+      if (a.emotionalDriver) tags.push(`Driver: ${a.emotionalDriver}`);
+      if (a.collectionId && cols.length > 1) tags.push(`Source: ${a.collectionId}`);
+      return `[ATOM ${i + 1}] ${tags.join(' | ')}\n${a.text}`;
+    }).join('\n\n');
+
+    const filterDesc = Object.entries(filters).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(', ');
+
+    const systemPrompt = `You are the Targeted Decomposition Engine's reconstruction system. Take atomic intelligence units and REASSEMBLE them into a targeted deliverable.
+
+RULES:
+- Use ONLY the provided atoms. Do not add information from general knowledge.
+- Every claim must trace to a specific atom.
+- If atoms are insufficient, state what is missing in a GAPS section at the end.
+- ${max_words ? `Stay under ${max_words} words.` : 'Be comprehensive but not padded.'}
+- ${format === 'json' ? 'Return valid JSON only. No markdown fences.' : format === 'markdown' ? 'Use markdown formatting.' : 'Use clean prose.'}`;
+
+    const userPrompt = `INTENT: ${intent}\n${intentInstruction}\n\n${context ? `CONTEXT: ${context}\n` : ''}${filterDesc ? `AUDIENCE FILTERS: ${filterDesc}\n` : ''}\nQUERY: ${query}\n\nATOMS (${topAtoms.length} of ${allResults.length} matches):\n\n${atomContext}\n\n${format === 'json' ? 'Respond with valid JSON only.' : 'After your main output, include a GAPS section listing information the atoms could NOT provide.'}`;
+
+    // Step 3: LLM reconstruction
+    console.log(`  Reconstructing (${intent}, ${format}, max ${max_words} words)...`);
+    const t0 = Date.now();
+    const raw = await callLLM(userPrompt, {
+      model: config.CONTENT_MODEL, system: systemPrompt,
+      maxTokens: Math.min(max_words ? max_words * 2 : 4000, 8000),
+      temperature: intent === 'enrichment' ? 0.2 : 0.4,
+    });
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(`  Reconstruction complete (${elapsed}s)`);
+
+    if (!raw) {
+      return { output: 'Reconstruction failed.', atoms_used: topAtoms, atoms_available: allResults.length, confidence: 'failed', gaps: ['LLM returned no response'] };
+    }
+
+    // Step 4: Parse output and extract gaps
+    let output = raw;
+    let gaps = [];
+    const gapMatch = raw.match(/(?:GAPS?|MISSING|INFORMATION GAPS?)[:\s]*\n([\s\S]*?)$/i);
+    if (gapMatch) {
+      output = raw.slice(0, gapMatch.index).trim();
+      gaps = gapMatch[1].split('\n').map(l => l.replace(/^[-*\u2022\d.)\s]+/, '').trim()).filter(l => l.length > 5);
+    }
+    if (format === 'json') {
+      try {
+        const cleaned = output.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        output = JSON.parse(cleaned);
+        if (output.gaps) { gaps = [...gaps, ...(Array.isArray(output.gaps) ? output.gaps : [output.gaps])]; }
+      } catch { /* leave as string */ }
+    }
+
+    let confidence = 'high';
+    if (topAtoms.length < 3) confidence = 'low';
+    else if (topAtoms.length < 7) confidence = 'medium';
+    if (gaps.length > 3) confidence = confidence === 'high' ? 'medium' : 'low';
+
+    return {
+      output, atoms_used: topAtoms, atoms_available: allResults.length, confidence, gaps,
+      meta: { intent, collections: cols, filters, elapsed_seconds: parseFloat(elapsed), atoms_retrieved: topAtoms.length },
+    };
   }
 
   // ── Analysis Layer (Template-Specific Extractors) ────────────────────────────
