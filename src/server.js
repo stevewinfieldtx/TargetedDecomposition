@@ -20,7 +20,6 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// File upload config
 const uploadDir = path.join(config.DATA_DIR, 'uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({ dest: uploadDir, limits: { fileSize: 100 * 1024 * 1024 } });
@@ -234,7 +233,6 @@ app.get('/search/:collectionId', auth, async (req, res) => {
     if (recency) filters.recency = recency;
     const limit = parseInt(top_k) || 10;
 
-    // Support multi-collection search via comma-separated IDs
     const colIds = req.params.collectionId.split(',').map(s => s.trim()).filter(Boolean);
     let allResults = [];
     for (const colId of colIds) {
@@ -274,7 +272,6 @@ app.post('/reconstruct/:collectionId', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-
 // ── Solution Research (Swarm + Deep Fill) ───────────────────────────────────
 
 app.post('/research/:collectionId', auth, async (req, res) => {
@@ -283,19 +280,16 @@ app.post('/research/:collectionId', auth, async (req, res) => {
     if (!solutionUrl) return res.status(400).json({ error: 'solutionUrl is required' });
     const collectionId = req.params.collectionId;
 
-    // Check if collection exists; if not, create it
     let col = await engine.getCollection(collectionId);
     if (!col) {
       const name = solutionName || solutionUrl.replace(/https?:\/\//, '').replace(/\/$/, '');
       col = await engine.createCollection(collectionId, name, 'Auto-created by solution research', {
         template: config.TEMPLATES.business || config.TEMPLATES.default,
-        templateId: 'business',
-        solutionUrl,
+        templateId: 'business', solutionUrl,
       });
       console.log('  [Research] Created collection: ' + collectionId);
     }
 
-    // Check existing atom count — if already rich, just return enrichment
     const stats = await engine.getStats(collectionId);
     if (stats.atomCount > 100) {
       console.log('  [Research] Collection already has ' + stats.atomCount + ' atoms — returning enrichment');
@@ -306,7 +300,6 @@ app.post('/research/:collectionId', auth, async (req, res) => {
       return res.json({ status: 'existing', atomCount: stats.atomCount, enrichment: enrichment.output, confidence: enrichment.confidence, gaps: enrichment.gaps });
     }
 
-    // Scrape the URL for web content to feed the swarm
     let webContent = '';
     try {
       const { extractWeb } = require('./ingest/web');
@@ -314,12 +307,10 @@ app.post('/research/:collectionId', auth, async (req, res) => {
       webContent = webData.text || '';
     } catch (err) { console.log('  [Research] Web scrape failed: ' + err.message); }
 
-    // Phase 1: Run the swarm (paid models, parallel)
     console.log('  [Research] Phase 1: Swarm starting for ' + solutionUrl);
     const swarmResult = await runSwarm(solutionUrl, solutionName, webContent);
     const msip = swarmResult.msip;
 
-    // Store the MSIP as text content in TDE
     const msipText = msipToText(msip, solutionUrl);
     if (msipText.length > 100) {
       await engine.ingest(collectionId, 'text', msipText, {
@@ -328,15 +319,12 @@ app.post('/research/:collectionId', auth, async (req, res) => {
       });
     }
 
-    // Also ingest the web scrape content if we got it
     if (webContent.length > 200) {
       await engine.ingest(collectionId, 'web', solutionUrl, {
         title: (msip.product_name || solutionName || solutionUrl) + ' — Website',
       }).catch(err => console.log('  [Research] Web ingest error: ' + err.message));
     }
 
-    // Get enrichment from whatever we have now
-    // Wait a moment for the pipeline to finish storing atoms
     await new Promise(r => setTimeout(r, 3000));
     let enrichment = null;
     try {
@@ -346,18 +334,14 @@ app.post('/research/:collectionId', auth, async (req, res) => {
       });
     } catch (err) { console.log('  [Research] Enrichment failed: ' + err.message); }
 
-    // Return Phase 1 results immediately
     res.json({
-      status: 'researched',
-      collectionId,
-      msip,
+      status: 'researched', collectionId, msip,
       enrichment: enrichment ? enrichment.output : msip,
       confidence: enrichment ? enrichment.confidence : 'medium',
       gaps: enrichment ? enrichment.gaps : [],
       swarm: { agents: swarmResult.agents.length, elapsed: swarmResult.elapsed },
     });
 
-    // Phase 2: Deep fill in background (free models, no one waiting)
     console.log('  [Research] Phase 2: Deep Fill starting in background...');
     runDeepFill(engine, collectionId, solutionUrl, solutionName, msip)
       .then(() => console.log('  [Research] Deep Fill complete for ' + collectionId))
@@ -406,40 +390,66 @@ app.post('/deploy-agent/:collectionId', auth, async (req, res) => {
     if (!col) return res.status(404).json({ error: 'Collection not found' });
     const atoms = await engine.getAtoms(req.params.collectionId);
     if (!atoms.length) return res.status(400).json({ error: 'No atoms in collection — ingest content first' });
-    const meta = col.metadata || {};
     const colName = col.name || req.params.collectionId;
-
-    // Build knowledge from atoms
     const knowledge = atoms.map(a => a.text).filter(t => t && t.length > 30);
-
-    // Build system prompt
     const knowledgeBlock = knowledge.map(k => `- ${k}`).join('\n');
-    const prompt = `You are an AI assistant for "${colName}". You speak with authority and practical knowledge based on the content you've been trained on.
-
-Your personality: Professional but approachable. You explain matters in clear, everyday language. You draw from real experiences and specific examples. You are direct and honest.
-
-CRITICAL RULES:
-- ONLY answer questions using the knowledge provided below
-- If asked something outside your knowledge, say you don't have that specific information
-- Never make things up — stick to what you know
-- Be specific — cite actual numbers, examples, and facts from your knowledge
-
-YOUR KNOWLEDGE BASE:
-${knowledgeBlock}
-
-When answering: be specific, be practical, be honest, keep it conversational.`;
-
+    const prompt = `You are an AI assistant for "${colName}". Professional but approachable. Use only the knowledge below. Never fabricate.\n\nKNOWLEDGE:\n${knowledgeBlock}\n\nBe specific, practical, honest, conversational.`;
     res.json({
-      ok: true,
-      collectionId: req.params.collectionId,
-      collectionName: colName,
-      atomCount: knowledge.length,
-      promptLength: prompt.length,
-      prompt: prompt,
+      ok: true, collectionId: req.params.collectionId, collectionName: colName,
+      atomCount: knowledge.length, promptLength: prompt.length, prompt: prompt,
       embedCode: `<!-- Add agent_id after creating the ElevenLabs agent -->\n<script src="https://elevenlabs.io/convai-widget/index.js" async data-agent-id="YOUR_AGENT_ID"></script>`,
       instructions: 'Use the prompt above as the system prompt when creating an ElevenLabs agent. The embed code goes on any website.'
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Agent Webhook (ElevenLabs Server Tool) ──────────────────────────────────
+// ElevenLabs agents call this endpoint as a webhook tool to query TDE collections.
+// Configure in ElevenLabs: Add Tool > Webhook > POST > URL below
+// URL: https://targeteddecomposition-production.up.railway.app/agent/query
+// Body params: question (string, required), collections (string, optional)
+
+app.post('/agent/query', async (req, res) => {
+  try {
+    var question = req.body.question || req.body.query || '';
+    var collections = req.body.collections || req.body.collection || 'WinTechPartners';
+
+    if (!question) {
+      return res.json({ answer: 'I didn\'t catch a question. Could you try again?' });
+    }
+
+    var colIds = Array.isArray(collections) ? collections : collections.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+
+    console.log('[Agent Query] Q: ' + question.slice(0, 80) + ' | Collections: ' + colIds.join(','));
+
+    var result = await engine.reconstruct(colIds, {
+      intent: 'agent_response',
+      query: question,
+      filters: {},
+      context: 'Caller is asking a voice agent. Keep the response conversational and under 150 words.',
+      format: 'text',
+      max_atoms: 10,
+      max_words: 150,
+    });
+
+    var answer = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+
+    // Strip any GAPS section from spoken response
+    var gapIdx = answer.search(/GAPS?[:\s]*\n/i);
+    if (gapIdx > 0) answer = answer.slice(0, gapIdx).trim();
+
+    console.log('[Agent Query] Answer: ' + answer.slice(0, 100) + '... (' + result.confidence + ')');
+
+    res.json({
+      answer: answer,
+      confidence: result.confidence,
+      atoms_used: result.atoms_used ? result.atoms_used.length : 0,
+    });
+
+  } catch (e) {
+    console.error('[Agent Query] Error: ' + e.message);
+    res.json({ answer: 'I\'m having trouble finding that information right now. Could you try asking in a different way?' });
+  }
 });
 
 // ── Admin UI ─────────────────────────────────────────────────────────────────
