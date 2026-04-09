@@ -1,5 +1,5 @@
 /**
- * TDE — REST API Server v2.1
+ * TDE — REST API Server v2.2
  * ═══════════════════════════════════════════════════════════════════
  * Deploy on Railway. Port 8400 by default.
  */
@@ -11,6 +11,7 @@ const cors    = require('cors');
 const multer  = require('multer');
 const config  = require('./config');
 const TDEngine = require('./core/engine');
+const { runSwarm, runDeepFill, msipToText } = require('./core/solution-research');
 
 const app    = express();
 const engine = new TDEngine();
@@ -30,7 +31,7 @@ function auth(req, res, next) { next(); }
 
 app.get('/health', (req, res) => {
   res.json({
-    status: 'ok', engine: 'TDE — Targeted Decomposition Engine', version: '2.1.0',
+    status: 'ok', engine: 'TDE — Targeted Decomposition Engine', version: '2.2.0',
     hasOpenRouter: !!config.OPENROUTER_API_KEY, hasYouTubeAPI: !!config.YOUTUBE_API_KEY,
     hasGroq: !!config.GROQ_API_KEY,
     vectorStore: engine.store.qdrantReady ? 'qdrant' : 'sqlite',
@@ -273,6 +274,98 @@ app.post('/reconstruct/:collectionId', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ── Solution Research (Swarm + Deep Fill) ───────────────────────────────────
+
+app.post('/research/:collectionId', auth, async (req, res) => {
+  try {
+    const { solutionUrl, solutionName } = req.body;
+    if (!solutionUrl) return res.status(400).json({ error: 'solutionUrl is required' });
+    const collectionId = req.params.collectionId;
+
+    // Check if collection exists; if not, create it
+    let col = await engine.getCollection(collectionId);
+    if (!col) {
+      const name = solutionName || solutionUrl.replace(/https?:\/\//, '').replace(/\/$/, '');
+      col = await engine.createCollection(collectionId, name, 'Auto-created by solution research', {
+        template: config.TEMPLATES.business || config.TEMPLATES.default,
+        templateId: 'business',
+        solutionUrl,
+      });
+      console.log('  [Research] Created collection: ' + collectionId);
+    }
+
+    // Check existing atom count — if already rich, just return enrichment
+    const stats = await engine.getStats(collectionId);
+    if (stats.atomCount > 100) {
+      console.log('  [Research] Collection already has ' + stats.atomCount + ' atoms — returning enrichment');
+      const enrichment = await engine.reconstruct([collectionId], {
+        intent: 'enrichment', query: 'complete solution profile: capabilities, differentiators, proof points, pain points',
+        format: 'json', max_atoms: 20,
+      });
+      return res.json({ status: 'existing', atomCount: stats.atomCount, enrichment: enrichment.output, confidence: enrichment.confidence, gaps: enrichment.gaps });
+    }
+
+    // Scrape the URL for web content to feed the swarm
+    let webContent = '';
+    try {
+      const { extractWeb } = require('./ingest/web');
+      const webData = await extractWeb(solutionUrl);
+      webContent = webData.text || '';
+    } catch (err) { console.log('  [Research] Web scrape failed: ' + err.message); }
+
+    // Phase 1: Run the swarm (paid models, parallel)
+    console.log('  [Research] Phase 1: Swarm starting for ' + solutionUrl);
+    const swarmResult = await runSwarm(solutionUrl, solutionName, webContent);
+    const msip = swarmResult.msip;
+
+    // Store the MSIP as text content in TDE
+    const msipText = msipToText(msip, solutionUrl);
+    if (msipText.length > 100) {
+      await engine.ingest(collectionId, 'text', msipText, {
+        title: (msip.product_name || solutionName || 'Solution') + ' — MSIP (Swarm Research)',
+        context: 'Minimum Solution Intelligence Profile from parallel agent swarm',
+      });
+    }
+
+    // Also ingest the web scrape content if we got it
+    if (webContent.length > 200) {
+      await engine.ingest(collectionId, 'web', solutionUrl, {
+        title: (msip.product_name || solutionName || solutionUrl) + ' — Website',
+      }).catch(err => console.log('  [Research] Web ingest error: ' + err.message));
+    }
+
+    // Get enrichment from whatever we have now
+    // Wait a moment for the pipeline to finish storing atoms
+    await new Promise(r => setTimeout(r, 3000));
+    let enrichment = null;
+    try {
+      enrichment = await engine.reconstruct([collectionId], {
+        intent: 'enrichment', query: 'complete solution profile: capabilities, differentiators, proof points, pain points',
+        format: 'json', max_atoms: 15,
+      });
+    } catch (err) { console.log('  [Research] Enrichment failed: ' + err.message); }
+
+    // Return Phase 1 results immediately
+    res.json({
+      status: 'researched',
+      collectionId,
+      msip,
+      enrichment: enrichment ? enrichment.output : msip,
+      confidence: enrichment ? enrichment.confidence : 'medium',
+      gaps: enrichment ? enrichment.gaps : [],
+      swarm: { agents: swarmResult.agents.length, elapsed: swarmResult.elapsed },
+    });
+
+    // Phase 2: Deep fill in background (free models, no one waiting)
+    console.log('  [Research] Phase 2: Deep Fill starting in background...');
+    runDeepFill(engine, collectionId, solutionUrl, solutionName, msip)
+      .then(() => console.log('  [Research] Deep Fill complete for ' + collectionId))
+      .catch(err => console.error('  [Research] Deep Fill error: ' + err.message));
+
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Stats ────────────────────────────────────────────────────────────────────
 
 app.get('/stats/:collectionId', auth, async (req, res) => {
@@ -359,7 +452,7 @@ app.use((req, res) => { res.status(404).json({ error: 'Not found', hint: 'See /h
 
 app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`  TDE — Targeted Decomposition Engine v2.1.0`);
+  console.log(`  TDE — Targeted Decomposition Engine v2.2.0`);
   console.log(`  Port:        ${config.PORT}`);
   console.log(`  OpenRouter:  ${config.OPENROUTER_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  YouTube API: ${config.YOUTUBE_API_KEY ? 'YES' : 'NO'}`);
