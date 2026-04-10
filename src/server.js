@@ -6,6 +6,7 @@
 
 const path    = require('path');
 const fs      = require('fs');
+const crypto  = require('crypto');
 const express = require('express');
 const cors    = require('cors');
 const multer  = require('multer');
@@ -24,7 +25,139 @@ const uploadDir = path.join(config.DATA_DIR, 'uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({ dest: uploadDir, limits: { fileSize: 100 * 1024 * 1024 } });
 
-function auth(req, res, next) { next(); }
+// ── API Key Auth with Collection Scoping ──────────────────────────────────
+// Keys are stored in PostgreSQL. Each key has an allowed_collections array.
+// If allowed_collections is NULL or empty, the key has access to ALL collections.
+// The master admin key (API_SECRET_KEY env var) bypasses all checks.
+
+const _apiKeysReady = (async () => {
+  // Wait for PG to be ready, then create the api_keys table
+  if (engine.store._pgInitPromise) await engine.store._pgInitPromise;
+  if (engine.store.pg && engine.store.pgReady) {
+    await engine.store.pg.query(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT PRIMARY KEY,
+        key_hash TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        team TEXT DEFAULT '',
+        allowed_collections TEXT[] DEFAULT '{}',
+        is_admin BOOLEAN DEFAULT false,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        last_used_at TIMESTAMPTZ
+      );
+    `);
+    console.log('  Auth: api_keys table ready');
+  }
+})();
+
+function hashKey(key) {
+  return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+function generateApiKey() {
+  return 'tde_' + crypto.randomBytes(24).toString('hex');
+}
+
+// Extract collectionId(s) from the request — works for URL params and body
+function getRequestedCollections(req) {
+  // From URL param (covers /search/:collectionId, /atoms/:collectionId, etc.)
+  if (req.params.collectionId) {
+    return req.params.collectionId.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  // From body (covers POST /ingest, etc.)
+  if (req.body.collectionId) return [req.body.collectionId];
+  if (req.body.collectionIds) return req.body.collectionIds;
+  return [];
+}
+
+async function auth(req, res, next) {
+  // Master admin key from env — full access to everything
+  if (config.API_SECRET_KEY) {
+    const provided = req.headers['x-api-key'] || req.query.api_key;
+    if (provided === config.API_SECRET_KEY) {
+      req.authScope = { admin: true, collections: null }; // null = unrestricted
+      return next();
+    }
+  }
+
+  // If no API_SECRET_KEY is set AND no api_keys in DB, run open (backwards compatible)
+  if (!config.API_SECRET_KEY) {
+    // Check if any api_keys exist in the database
+    if (engine.store.pg && engine.store.pgReady) {
+      const { rows } = await engine.store.pg.query('SELECT COUNT(*) as cnt FROM api_keys WHERE is_active = true');
+      if (parseInt(rows[0].cnt) === 0) {
+        req.authScope = { admin: true, collections: null };
+        return next();
+      }
+    } else {
+      // No PG, no keys — run open
+      req.authScope = { admin: true, collections: null };
+      return next();
+    }
+  }
+
+  // Require a key
+  const provided = req.headers['x-api-key'] || req.query.api_key;
+  if (!provided) {
+    return res.status(401).json({ error: 'API key required. Pass via x-api-key header.' });
+  }
+
+  // Look up the key
+  if (!engine.store.pg || !engine.store.pgReady) {
+    return res.status(503).json({ error: 'Auth service unavailable — database not connected' });
+  }
+
+  const hash = hashKey(provided);
+  const { rows } = await engine.store.pg.query(
+    'SELECT id, name, team, allowed_collections, is_admin, is_active FROM api_keys WHERE key_hash = $1',
+    [hash]
+  );
+
+  if (!rows.length || !rows[0].is_active) {
+    return res.status(401).json({ error: 'Invalid or revoked API key' });
+  }
+
+  const keyRecord = rows[0];
+
+  // Update last_used_at (fire and forget)
+  engine.store.pg.query('UPDATE api_keys SET last_used_at = NOW() WHERE id = $1', [keyRecord.id]).catch(() => {});
+
+  // Admin keys get full access
+  if (keyRecord.is_admin) {
+    req.authScope = { admin: true, collections: null, team: keyRecord.team, keyName: keyRecord.name };
+    return next();
+  }
+
+  // Check collection scoping
+  const allowed = keyRecord.allowed_collections || [];
+  if (allowed.length === 0) {
+    // Empty array = access to all collections
+    req.authScope = { admin: false, collections: null, team: keyRecord.team, keyName: keyRecord.name };
+    return next();
+  }
+
+  // Validate requested collections against allowed list
+  const requested = getRequestedCollections(req);
+  if (requested.length > 0) {
+    const denied = requested.filter(c => !allowed.includes(c));
+    if (denied.length > 0) {
+      return res.status(403).json({
+        error: 'Access denied to collection(s): ' + denied.join(', '),
+        hint: 'This API key is scoped to: ' + allowed.join(', '),
+      });
+    }
+  }
+
+  req.authScope = { admin: false, collections: allowed, team: keyRecord.team, keyName: keyRecord.name };
+  next();
+}
+
+// Collection-list filtering: non-admin scoped keys only see their allowed collections
+function filterCollections(collections, authScope) {
+  if (!authScope || !authScope.collections) return collections; // unrestricted
+  return collections.filter(c => authScope.collections.includes(c.id));
+}
 
 // ── Health ──────────────────────────────────────────────────────────────────
 
@@ -54,7 +187,8 @@ app.get('/templates', auth, (req, res) => {
 app.get('/collections', auth, async (req, res) => {
   try {
     const collections = await engine.listCollections();
-    const withStats = await Promise.all(collections.map(async (col) => {
+    const visible = filterCollections(collections, req.authScope);
+    const withStats = await Promise.all(visible.map(async (col) => {
       try {
         const stats = await engine.getStats(col.id);
         return { ...col, stats };
@@ -452,6 +586,161 @@ app.post('/agent/query', async (req, res) => {
   }
 });
 
+// ── API Key Management (admin only) ────────────────────────────────────────
+
+// Create a new API key
+app.post('/admin/api-keys', auth, async (req, res) => {
+  try {
+    if (!req.authScope?.admin) return res.status(403).json({ error: 'Admin access required' });
+    const { name, team, allowed_collections, is_admin } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+
+    const key = generateApiKey();
+    const id = crypto.randomUUID();
+    const hash = hashKey(key);
+    const cols = Array.isArray(allowed_collections) ? allowed_collections : [];
+
+    await engine.store.pg.query(
+      `INSERT INTO api_keys (id, key_hash, name, team, allowed_collections, is_admin)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, hash, name, team || '', cols, is_admin || false]
+    );
+
+    // Return the key ONCE — it cannot be retrieved again
+    res.json({
+      ok: true, id, name, team: team || '', key,
+      allowed_collections: cols,
+      is_admin: is_admin || false,
+      warning: 'Save this key now. It cannot be retrieved again.',
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// List all API keys (without the actual key — just metadata)
+app.get('/admin/api-keys', auth, async (req, res) => {
+  try {
+    if (!req.authScope?.admin) return res.status(403).json({ error: 'Admin access required' });
+    const { rows } = await engine.store.pg.query(
+      `SELECT id, name, team, allowed_collections, is_admin, is_active, created_at, last_used_at
+       FROM api_keys ORDER BY created_at DESC`
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Update a key (change collections, deactivate, etc.)
+app.patch('/admin/api-keys/:keyId', auth, async (req, res) => {
+  try {
+    if (!req.authScope?.admin) return res.status(403).json({ error: 'Admin access required' });
+    const { allowed_collections, is_active, name, team } = req.body;
+    const updates = []; const vals = []; let idx = 1;
+
+    if (allowed_collections !== undefined) { updates.push(`allowed_collections = $${idx++}`); vals.push(allowed_collections); }
+    if (is_active !== undefined)           { updates.push(`is_active = $${idx++}`); vals.push(is_active); }
+    if (name !== undefined)                { updates.push(`name = $${idx++}`); vals.push(name); }
+    if (team !== undefined)                { updates.push(`team = $${idx++}`); vals.push(team); }
+
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+    vals.push(req.params.keyId);
+
+    const { rowCount } = await engine.store.pg.query(
+      `UPDATE api_keys SET ${updates.join(', ')} WHERE id = $${idx}`, vals
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Key not found' });
+    res.json({ ok: true, updated: req.params.keyId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Revoke a key (soft delete — sets is_active = false)
+app.delete('/admin/api-keys/:keyId', auth, async (req, res) => {
+  try {
+    if (!req.authScope?.admin) return res.status(403).json({ error: 'Admin access required' });
+    const { rowCount } = await engine.store.pg.query(
+      'UPDATE api_keys SET is_active = false WHERE id = $1', [req.params.keyId]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Key not found' });
+    res.json({ ok: true, revoked: req.params.keyId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Retry (single source) ─────────────────────────────────────────────────────
+
+app.post('/retry/:collectionId/:sourceId', auth, async (req, res) => {
+  const { collectionId, sourceId } = req.params;
+  try {
+    const sources = await engine.getSources(collectionId);
+    const source = sources.find(s => s.id === sourceId);
+    if (!source) return res.status(404).json({ error: 'Source not found' });
+    if (source.status !== 'error') return res.status(400).json({ error: `Source is "${source.status}", not "error"` });
+
+    const meta = typeof source.metadata === 'string' ? JSON.parse(source.metadata) : (source.metadata || {});
+    const retryCount = (meta.retryCount || 0) + 1;
+
+    console.log(`\n  [RETRY] ${sourceId} in ${collectionId} (attempt ${retryCount}) — ${source.source_type}: ${source.source_url || source.file_path}`);
+
+    // Reset to processing with retry metadata
+    meta.retryCount = retryCount;
+    meta.lastRetryAt = new Date().toISOString();
+    delete meta.error;
+    delete meta.retriesExhausted;
+    await engine.store.addSource(collectionId, { ...source, status: 'processing', metadata: meta, sourceType: source.source_type, sourceUrl: source.source_url, filePath: source.file_path });
+
+    // Re-run ingestion async
+    const input = source.source_url || source.file_path;
+    const type = source.source_type;
+    engine.ingest(collectionId, type, input, { _retrySourceId: sourceId, _retryCount: retryCount })
+      .then(r => console.log(`  [RETRY] Success: ${sourceId} — ${r?.title || 'done'}`))
+      .catch(err => console.error(`  [RETRY] Failed: ${sourceId} — ${err.message}`));
+
+    res.json({ ok: true, sourceId, retryCount, status: 'requeued' });
+  } catch (err) {
+    console.error('[RETRY ERROR]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Retry (all failed in collection) ──────────────────────────────────────────
+
+app.post('/retry/:collectionId', auth, async (req, res) => {
+  const { collectionId } = req.params;
+  try {
+    const sources = await engine.getSources(collectionId);
+    const errors = sources.filter(s => s.status === 'error');
+    if (!errors.length) return res.json({ ok: true, retried: 0, message: 'No failed sources to retry' });
+
+    let queued = 0;
+    for (const source of errors) {
+      const meta = typeof source.metadata === 'string' ? JSON.parse(source.metadata) : (source.metadata || {});
+      const retryCount = (meta.retryCount || 0) + 1;
+      meta.retryCount = retryCount;
+      meta.lastRetryAt = new Date().toISOString();
+      delete meta.error;
+      delete meta.retriesExhausted;
+
+      await engine.store.addSource(collectionId, { ...source, status: 'processing', metadata: meta, sourceType: source.source_type, sourceUrl: source.source_url, filePath: source.file_path });
+
+      const input = source.source_url || source.file_path;
+      const type = source.source_type;
+
+      // Stagger to avoid hammering YouTube
+      const delay = queued * 3000;
+      setTimeout(() => {
+        console.log(`  [RETRY-ALL] ${source.id} (attempt ${retryCount})`);
+        engine.ingest(collectionId, type, input, { _retrySourceId: source.id, _retryCount: retryCount })
+          .then(r => console.log(`  [RETRY-ALL] Success: ${source.id}`))
+          .catch(err => console.error(`  [RETRY-ALL] Failed: ${source.id} — ${err.message}`));
+      }, delay);
+
+      queued++;
+    }
+
+    res.json({ ok: true, retried: queued, message: `${queued} sources requeued (staggered 3s apart)` });
+  } catch (err) {
+    console.error('[RETRY-ALL ERROR]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Admin UI ─────────────────────────────────────────────────────────────────
 
 app.get('/admin', (req, res) => {
@@ -468,7 +757,7 @@ app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`  YouTube API: ${config.YOUTUBE_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  Groq:        ${config.GROQ_API_KEY ? 'YES' : 'NO'}`);
   console.log(`  Templates:   ${Object.keys(config.TEMPLATES).join(', ')}`);
-  console.log(`  Auth:        OPEN (no API key required)`);
+  console.log(`  Auth:        ${config.API_SECRET_KEY ? 'MASTER KEY SET' : 'OPEN until first API key is created'}`);
   console.log(`  Admin UI:    http://localhost:${config.PORT}/admin`);
   console.log(`${'═'.repeat(60)}\n`);
 });

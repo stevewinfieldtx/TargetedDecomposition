@@ -32,6 +32,9 @@ const { v4: uuidv4 } = require('uuid');
 
 const youtube = require('../ingest/youtube');
 
+const MAX_AUTO_RETRIES = 2;
+const AUTO_RETRY_DELAYS = [10000, 30000]; // 10s first, 30s second
+
 class TDEngine {
   constructor(dataDir) {
     this.store = new Store(dataDir || config.DATA_DIR);
@@ -93,8 +96,22 @@ class TDEngine {
       console.log(`  Done: ${atoms.length} atoms stored for "${sourceRecord.title}"`);
       return { ...sourceRecord, atomCount: atoms.length };
     } catch (err) {
+      const retryCount = sourceRecord.metadata.retryCount || 0;
+      if (retryCount < MAX_AUTO_RETRIES) {
+        const delay = AUTO_RETRY_DELAYS[retryCount] || 30000;
+        sourceRecord.metadata.retryCount = retryCount + 1;
+        sourceRecord.metadata.lastError = err.message;
+        sourceRecord.metadata.lastRetryAt = new Date().toISOString();
+        await this.store.addSource(collectionId, sourceRecord);
+        console.log(`  [AUTO-RETRY] ${sourceId} — attempt ${retryCount + 1}/${MAX_AUTO_RETRIES} in ${delay/1000}s (${err.message})`);
+        setTimeout(() => {
+          this.ingest(collectionId, type, input, { ...opts, _retryCount: retryCount + 1 })
+            .catch(e => console.error(`  [AUTO-RETRY] Failed: ${sourceId} — ${e.message}`));
+        }, delay);
+        return { ...sourceRecord, status: 'processing' };
+      }
       sourceRecord.status = 'error';
-      sourceRecord.metadata = { ...sourceRecord.metadata, error: err.message };
+      sourceRecord.metadata = { ...sourceRecord.metadata, error: err.message, retriesExhausted: true, finalFailedAt: new Date().toISOString() };
       await this.store.addSource(collectionId, sourceRecord);
       throw err;
     }
@@ -146,7 +163,26 @@ class TDEngine {
 
     const transcript = await youtube.getTranscript(videoId);
     if (!transcript) {
-      source.status = 'error'; source.metadata.error = 'No transcript available';
+      const retryCount = source.metadata.retryCount || 0;
+      if (retryCount < MAX_AUTO_RETRIES) {
+        const delay = AUTO_RETRY_DELAYS[retryCount] || 30000;
+        source.metadata.retryCount = retryCount + 1;
+        source.metadata.lastError = 'No transcript available';
+        source.metadata.lastRetryAt = new Date().toISOString();
+        await this.store.addSource(collectionId, source);
+        console.log(`  [AUTO-RETRY] ${videoId} — attempt ${retryCount + 1}/${MAX_AUTO_RETRIES} in ${delay/1000}s (no transcript)`);
+        setTimeout(() => {
+          this._ingestYouTube(collectionId, videoUrl)
+            .then(r => r ? console.log(`  [AUTO-RETRY] Success: ${videoId}`) : null)
+            .catch(err => console.error(`  [AUTO-RETRY] Failed: ${videoId} — ${err.message}`));
+        }, delay);
+        return null; // Return null but don't mark error yet
+      }
+      // Auto-retries exhausted — mark permanent error
+      source.status = 'error';
+      source.metadata.error = 'No transcript available';
+      source.metadata.retriesExhausted = true;
+      source.metadata.finalFailedAt = new Date().toISOString();
       await this.store.addSource(collectionId, source);
       return null;
     }
