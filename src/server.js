@@ -249,6 +249,13 @@ app.post('/admin/nuke', auth, async (req, res) => {
 
 // ── Sources & Atoms ─────────────────────────────────────────────────────────
 
+app.delete('/sources/:collectionId/:sourceId', auth, async (req, res) => {
+  try {
+    await engine.deleteSource(req.params.collectionId, req.params.sourceId);
+    res.json({ ok: true, deleted: req.params.sourceId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/sources/:collectionId', auth, async (req, res) => {
   try { res.json(await engine.getSources(req.params.collectionId)); }
   catch (e) { res.status(500).json({ error: e.message }); }

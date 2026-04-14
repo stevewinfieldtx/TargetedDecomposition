@@ -48,6 +48,7 @@ tr:hover td{background:var(--hover)}
 .btn:hover{background:var(--hover);border-color:var(--border2)}
 .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.primary:hover{background:#2563eb}
 .btn.green{background:var(--green);border-color:var(--green);color:#000}.btn.green:hover{opacity:.9}
+.btn.danger{background:transparent;border-color:#f87171;color:#f87171}.btn.danger:hover{background:#7f1d1d;border-color:#fca5a5;color:#fff}
 .btn.sm{padding:4px 9px;font-size:11px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .ig{margin-bottom:13px}
@@ -169,6 +170,53 @@ async function loadCollection(id) {
     state.colDetail = detail; state.colSources = sources;
     render();
   } catch (err) { log(`Failed: ${err.message}`, 'err'); }
+}
+
+async function refreshCollection(id) {
+  try {
+    log('Refreshing ' + id + '...', 'ok');
+    await loadAll();
+    toast('Refreshed', 'success');
+  } catch (e) { log('Refresh failed: ' + e.message, 'err'); toast('Refresh failed', 'error'); }
+}
+
+async function confirmDeleteCollection(id) {
+  const _c = (state.collections || []).find(x => x.id === id);
+  const name = _c ? _c.name : id;
+  const confirmed = confirm('Delete collection "' + name + '"?\n\nThis permanently removes ALL atoms, sources, and metadata in this collection. This cannot be undone.');
+  if (!confirmed) return;
+  const typed = prompt('Type the collection ID to confirm delete:\n(' + id + ')');
+  if (typed !== id) { toast('ID mismatch. Delete cancelled.', 'error'); return; }
+  try {
+    log('Deleting ' + id + '...', 'ok');
+    await api('/collections/' + encodeURIComponent(id), { method: 'DELETE' });
+    log('Deleted: ' + name, 'ok');
+    toast('Collection deleted', 'success');
+    if (state.selectedCol === id) { state.selectedCol = null; state.colDetail = null; view = 'collections'; }
+    await loadAll();
+  } catch (e) { log('Delete failed: ' + e.message, 'err'); toast('Delete failed: ' + e.message, 'error'); }
+}
+
+async function retrySource(collectionId, sourceId) {
+  try {
+    log('Retrying ' + sourceId + '...', 'ok');
+    await api('/retry/' + encodeURIComponent(collectionId) + '/' + encodeURIComponent(sourceId), { method: 'POST' });
+    toast('Retry queued', 'success');
+    setTimeout(() => { if (state.selectedCol === collectionId) loadCollection(collectionId); }, 2000);
+  } catch (e) { log('Retry failed: ' + e.message, 'err'); toast('Retry failed: ' + e.message, 'error'); }
+}
+
+async function confirmDeleteSource(collectionId, sourceId) {
+  const src = (state.colSources || []).find(s => s.id === sourceId);
+  const title = src ? (src.title || sourceId) : sourceId;
+  if (!confirm('Delete source "' + title + '"?\n\nThis removes all atoms from this source but keeps the collection. Cannot be undone.')) return;
+  try {
+    log('Deleting source ' + sourceId + '...', 'ok');
+    await api('/sources/' + encodeURIComponent(collectionId) + '/' + encodeURIComponent(sourceId), { method: 'DELETE' });
+    toast('Source deleted', 'success');
+    await loadCollection(collectionId);
+    await loadAll();
+  } catch (e) { log('Delete failed: ' + e.message, 'err'); toast('Delete failed: ' + e.message, 'error'); }
 }
 
 async function createCollection(id, name, desc, templateId) {
@@ -357,7 +405,11 @@ function pageCollections() {
             <td>${st.sourceCount||0}</td>
             <td style="color:var(--purple);font-weight:600">${(st.atomCount||0).toLocaleString()}</td>
             <td>${types||'<span style="color:var(--dim)">—</span>'}</td>
-            <td><button class="btn sm" onclick="event.stopPropagation();showIngestModal('${c.id}')">+ Ingest</button></td>
+            <td style="white-space:nowrap">
+              <button class="btn sm" onclick="event.stopPropagation();showIngestModal('${c.id}')">+ Ingest</button>
+              <button class="btn sm" title="Refresh stats" onclick="event.stopPropagation();refreshCollection('${c.id}')">&#8635;</button>
+              <button class="btn sm danger" title="Delete collection" onclick="event.stopPropagation();confirmDeleteCollection('${c.id}')">&#128465;</button>
+            </td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>`}`;
@@ -389,7 +441,7 @@ function pageDetail() {
     <div class="panel-hdr"><h3>Sources</h3><span style="font-size:11px;color:var(--dim)">${state.colSources.length} total</span></div>
     ${state.colSources.length === 0
       ? `<div class="empty"><p>No sources yet. Use Ingest to add content.</p></div>`
-      : `<table><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Atoms</th><th>Duration/Pages</th></tr></thead>
+      : `<table><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Atoms</th><th>Duration/Pages</th><th></th></tr></thead>
          <tbody>${state.colSources.map(src => {
            const meta = src.metadata || {};
            const dur = src.duration ? Math.round(src.duration/60) + 'm' : '';
@@ -400,6 +452,10 @@ function pageDetail() {
              <td><span class="dot ${src.status==='ready'?'on':src.status==='error'?'off':'warn'}"></span>${src.status}</td>
              <td style="color:var(--purple)">${meta.atomCount||'—'}</td>
              <td style="color:var(--dim)">${dur||pages||'—'}</td>
+             <td style="white-space:nowrap">
+               <button class="btn sm" title="Re-ingest" onclick="retrySource('${state.selectedCol}','${src.id}')">&#8635;</button>
+               <button class="btn sm danger" title="Delete source" onclick="confirmDeleteSource('${state.selectedCol}','${src.id}')">&#128465;</button>
+             </td>
            </tr>`;
          }).join('')}</tbody></table>`}
   </div>`;

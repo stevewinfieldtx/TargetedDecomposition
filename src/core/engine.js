@@ -504,6 +504,8 @@ RULES:
 
   // ── Stats & Intelligence ──────────────────────────────────────────────────────
 
+  async deleteSource(collectionId, sourceId) { return this.store.deleteSource(collectionId, sourceId); }
+
   async getStats(collectionId)               { return this.store.getStats(collectionId); }
   async getIntelligence(collectionId, type)  { return this.store.getIntelligence(collectionId, type); }
   async getSources(collectionId)             { return this.store.getSources(collectionId); }

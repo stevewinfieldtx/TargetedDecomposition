@@ -246,6 +246,26 @@ class Store {
     return source;
   }
 
+  async deleteSource(collectionId, sourceId) {
+    await this._waitReady();
+    if (this._usePg()) {
+      await this.pg.query('DELETE FROM atoms WHERE collection_id=$1 AND source_id=$2', [collectionId, sourceId]);
+      await this.pg.query('DELETE FROM sources WHERE collection_id=$1 AND id=$2', [collectionId, sourceId]);
+    } else if (this.db) {
+      this.db.prepare('DELETE FROM atoms WHERE collection_id=? AND source_id=?').run(collectionId, sourceId);
+      this.db.prepare('DELETE FROM sources WHERE collection_id=? AND id=?').run(collectionId, sourceId);
+    }
+    if (this.qdrantReady) {
+      try {
+        await this.qdrant.delete(this._qName(collectionId), {
+          filter: { must: [{ key: 'source_id', match: { value: sourceId } }] }
+        });
+        console.log(`  Qdrant: deleted source ${sourceId} from ${this._qName(collectionId)}`);
+      } catch (err) { console.log(`  Qdrant source delete note: ${err.message}`); }
+    }
+    console.log(`  Deleted source ${sourceId} from collection ${collectionId}`);
+  }
+
   async getSource(collectionId, sourceId) {
     await this._waitReady();
     if (this._usePg()) {
