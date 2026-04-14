@@ -187,7 +187,7 @@ class TDEngine {
       return null;
     }
 
-    const content = { text: transcript.text, segments: transcript.segments, title: source.title, author: source.author, duration: source.duration, metadata: source.metadata };
+    const content = { text: transcript.text, segments: transcript.segments, title: source.title, author: source.author, duration: source.duration, metadata: source.metadata, sourceUrl: videoUrl };
     const atoms = await this._pipeline(collectionId, videoId, content, `YouTube video: "${source.title}" by ${source.author}`);
     source.status = 'ready'; source.metadata.atomCount = atoms.length;
     await this.store.addSource(collectionId, source);

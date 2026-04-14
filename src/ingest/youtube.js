@@ -9,7 +9,7 @@
  *
  * Captures: views, likes, comments count + top comments text.
  */
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -113,7 +113,7 @@ async function getTranscript(videoId) {
   // This is the fastest and most reliable — no audio download needed
   console.log(`  Trying yt-dlp subtitle extraction...`);
   const ytdlpResult = await extractSubtitlesViaYtdlp(videoId);
-  if (ytdlpResult && ytdlpResult.text.length > 50) {
+  if (ytdlpResult && ytdlpResult.text.length > 100 && ytdlpResult.segments.length >= 5) {
     console.log(`  yt-dlp subtitles OK: ${ytdlpResult.text.length} chars`);
     return { ...ytdlpResult, source: 'yt-dlp-subs' };
   }
@@ -121,7 +121,7 @@ async function getTranscript(videoId) {
   // Strategy 2: Watch page caption scraping (via proxy if available)
   console.log(`  Trying watch page captions...`);
   const captions = await fetchCaptionsFromWatchPage(videoId);
-  if (captions && captions.text.length > 50) {
+  if (captions && captions.text.length > 100 && captions.segments.length >= 5) {
     console.log(`  Watch page captions OK: ${captions.text.length} chars`);
     return { ...captions, source: 'watch-page' };
   }
@@ -174,7 +174,7 @@ function extractSubtitlesViaYtdlp(videoId) {
       '-o', outTemplate,
       ytUrl,
     ];
-    execSync(cmd.join(' '), { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] });
+    execFileSync(cmd[0], cmd.slice(1), { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] });
   } catch {
     // Retry with vtt format
     try {
@@ -191,7 +191,7 @@ function extractSubtitlesViaYtdlp(videoId) {
         '-o', outTemplate,
         ytUrl,
       ];
-      execSync(cmd2.join(' '), { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] });
+      execFileSync(cmd2[0], cmd2.slice(1), { timeout: 45000, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch {
       console.log(`  yt-dlp subtitle extraction failed`);
       return null;
@@ -229,15 +229,20 @@ function extractSubtitlesViaYtdlp(videoId) {
         });
       }
     } else {
-      // Parse VTT
+      // Parse VTT with deduplication (rolling captions repeat lines across cues)
+      const seenLines = new Set();
       const blocks = content.split('\n\n');
       for (const block of blocks) {
         const lines = block.trim().split('\n');
         const tsLine = lines.find(l => l.includes('-->'));
         if (!tsLine) continue;
         const textLines = lines.filter(l => !l.includes('-->') && !/^\d+$/.test(l.trim()) && !l.startsWith('WEBVTT'));
-        const text = textLines.join(' ').replace(/<[^>]+>/g, '').trim();
+        let text = textLines.join(' ').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
         if (!text) continue;
+        // Dedup: skip lines we've already seen
+        const dedupKey = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+        if (seenLines.has(dedupKey)) continue;
+        seenLines.add(dedupKey);
         const [startStr] = tsLine.split('-->');
         const parts = startStr.trim().split(':');
         let start = 0;
@@ -272,10 +277,9 @@ async function fetchCaptionsFromWatchPage(videoId) {
     if (PROXY_URL) {
       // Use yt-dlp to dump the page (it handles proxy + cookies better than raw fetch)
       try {
-        const result = execSync(
-          `yt-dlp --dump-json --skip-download --proxy "${PROXY_URL}" "${watchUrl}"`,
-          { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
-        );
+        const result = execFileSync('yt-dlp', [
+          '--dump-json', '--skip-download', '--proxy', PROXY_URL, watchUrl
+        ], { timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
         const videoData = JSON.parse(result.toString());
         // yt-dlp --dump-json includes subtitle info
         const subs = videoData.subtitles || videoData.automatic_captions || {};
@@ -375,16 +379,16 @@ async function downloadAndTranscribe(videoId) {
   const audioDir = path.join(config.DATA_DIR, 'audio');
   fs.mkdirSync(audioDir, { recursive: true });
   const audioPath = path.join(audioDir, `${videoId}.m4a`);
-  const proxyArgs = PROXY_URL ? `--proxy "${PROXY_URL}"` : '';
+  const proxyArgs = PROXY_URL ? ['--proxy', PROXY_URL] : [];
 
   try {
     if (!fs.existsSync(audioPath)) {
       const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
       try {
-        execSync(`yt-dlp -f "ba[ext=m4a]/ba" --no-playlist ${proxyArgs} -o "${audioPath}" "${ytUrl}"`, { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
+        execFileSync('yt-dlp', ['-f', 'ba[ext=m4a]/ba', '--no-playlist', ...proxyArgs, '-o', audioPath, ytUrl], { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch {
         try {
-          execSync(`yt-dlp -x --audio-format m4a --no-playlist ${proxyArgs} -o "${audioPath}" "${ytUrl}"`, { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
+          execFileSync('yt-dlp', ['-x', '--audio-format', 'm4a', '--no-playlist', ...proxyArgs, '-o', audioPath, ytUrl], { timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
         } catch { console.log(`  Audio download failed`); return null; }
       }
     }

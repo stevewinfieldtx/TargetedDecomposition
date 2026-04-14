@@ -173,6 +173,18 @@ app.get('/health', (req, res) => {
   });
 });
 
+// ── Intel Cache (Company + Industry Knowledge Persistence) ──────────────
+// Mounts /intel/company, /intel/industry, /intel/stats endpoints
+// Tables auto-created on startup. TTL configurable via INTEL_TTL_DAYS env var.
+(async () => {
+  if (engine.store._pgInitPromise) await engine.store._pgInitPromise;
+  if (engine.store.pg && engine.store.pgReady) {
+    require('./routes/intel-cache-routes')(app, auth, engine.store.pg);
+  } else {
+    console.log('  Intel Cache: SKIPPED (no PostgreSQL)');
+  }
+})();
+
 // ── Templates ────────────────────────────────────────────────────────────────
 
 app.get('/templates', auth, (req, res) => {

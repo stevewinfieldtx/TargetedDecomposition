@@ -37,7 +37,7 @@ const MAX_ATOM_WORDS = 120;   // atoms longer than this are probably compound id
  * @returns {Array}         — array of atom objects ready for tagging + embedding
  */
 async function munge(content, sourceId) {
-  const { text, segments } = content;
+  const { text, segments, sourceUrl } = content;
   if (!text || text.trim().length < 50) return [];
 
   console.log(`  Munger: processing ${Math.round(text.length / 5)} words...`);
@@ -62,26 +62,40 @@ async function munge(content, sourceId) {
   const unique = deduplicateAtoms(rawAtoms);
   console.log(`  Munger: ${rawAtoms.length} raw → ${unique.length} unique atoms`);
 
-  // Enrich with source context (timestamps / page numbers)
-  const enriched = unique.map((atom, idx) => ({
-    id:          `${sourceId}_a${String(idx).padStart(4, '0')}`,
-    atomIndex:   idx,
-    text:        atom.text,
-    atomType:    atom.type || 'general',
-    confidence:  atom.confidence || 0.8,
-    startTime:   lookupTime(atom.text, segIndex, 'start'),
-    endTime:     lookupTime(atom.text, segIndex, 'end'),
-    pageNumber:  lookupPage(atom.text, segIndex),
-    speaker:     atom.speaker || null,
-    // 6D fields will be filled by tagger.js
-    d_persona:         '',
-    d_buying_stage:    '',
-    d_emotional_driver:'',
-    d_evidence_type:   '',
-    d_credibility:     3,
-    d_recency:         '',
-    embedding:         null,
-  }));
+  // Enrich with source context (timestamps / page numbers / timestamp URLs)
+  const enriched = unique.map((atom, idx) => {
+    const timeMatch = lookupTime(atom.text, segIndex);
+    const startTime = timeMatch ? timeMatch.startTime : 0;
+    const endTime = timeMatch ? timeMatch.endTime : 0;
+    // Build clickable timestamp URL for YouTube sources
+    let timestampUrl = '';
+    if (sourceUrl && startTime > 0) {
+      const t = Math.floor(startTime);
+      timestampUrl = sourceUrl.includes('?') 
+        ? `${sourceUrl}&t=${t}s`
+        : `${sourceUrl}?t=${t}s`;
+    }
+    return {
+      id:          `${sourceId}_a${String(idx).padStart(4, '0')}`,
+      atomIndex:   idx,
+      text:        atom.text,
+      atomType:    atom.type || 'general',
+      confidence:  atom.confidence || 0.8,
+      startTime,
+      endTime,
+      timestampUrl,
+      pageNumber:  lookupPage(atom.text, segIndex),
+      speaker:     atom.speaker || null,
+      // 6D fields will be filled by tagger.js
+      d_persona:         '',
+      d_buying_stage:    '',
+      d_emotional_driver:'',
+      d_evidence_type:   '',
+      d_credibility:     3,
+      d_recency:         '',
+      embedding:         null,
+    };
+  });
 
   return enriched;
 }
@@ -203,12 +217,29 @@ function buildSegmentIndex(segments) {
   }));
 }
 
-function lookupTime(atomText, segIndex, which) {
-  if (!segIndex.length) return 0;
-  const lower   = atomText.toLowerCase().slice(0, 50);
-  const match   = segIndex.find(s => s.text.includes(lower.slice(0, 20)));
-  if (!match) return 0;
-  return which === 'start' ? match.startTime : match.endTime;
+function lookupTime(atomText, segIndex) {
+  if (!segIndex.length) return null;
+  // Fuzzy word-overlap matching: the LLM rewords atoms, so substring matching
+  // against raw transcript rarely works. Instead, tokenize both and find the
+  // segment with the most word overlap.
+  const atomWords = new Set(atomText.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3));
+  if (atomWords.size === 0) return null;
+  
+  let bestMatch = null;
+  let bestScore = 0;
+  for (const seg of segIndex) {
+    const segWords = seg.text.split(/\s+/).filter(w => w.length > 3);
+    let overlap = 0;
+    for (const w of segWords) {
+      if (atomWords.has(w)) overlap++;
+    }
+    const score = atomWords.size > 0 ? overlap / atomWords.size : 0;
+    if (score > bestScore && score >= 0.15) {
+      bestScore = score;
+      bestMatch = seg;
+    }
+  }
+  return bestMatch;
 }
 
 function lookupPage(atomText, segIndex) {

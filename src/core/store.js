@@ -65,6 +65,7 @@ class Store {
           atom_type TEXT DEFAULT 'general',
           atom_confidence REAL DEFAULT 1.0,
           start_time REAL DEFAULT 0, end_time REAL DEFAULT 0,
+          timestamp_url TEXT DEFAULT '',
           page_number INTEGER DEFAULT 0,
           speaker TEXT,
           d_persona TEXT DEFAULT '',
@@ -105,6 +106,7 @@ class Store {
       `ALTER TABLE sources ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT ''`,
       `ALTER TABLE sources ADD COLUMN IF NOT EXISTS page_count INTEGER DEFAULT 0`,
       `ALTER TABLE atoms ADD COLUMN IF NOT EXISTS speaker TEXT`,
+      `ALTER TABLE atoms ADD COLUMN IF NOT EXISTS timestamp_url TEXT DEFAULT ''`,
       `ALTER TABLE atoms ADD COLUMN IF NOT EXISTS atom_confidence REAL DEFAULT 1.0`,
     ];
     for (const sql of migrations) {
@@ -280,15 +282,15 @@ class Store {
         for (const a of atoms) {
           await client.query(
             `INSERT INTO atoms (id,source_id,collection_id,text,atom_index,atom_type,atom_confidence,
-              start_time,end_time,page_number,speaker,
+              start_time,end_time,timestamp_url,page_number,speaker,
               d_persona,d_buying_stage,d_emotional_driver,d_evidence_type,d_credibility,d_recency,
               embedding)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-             ON CONFLICT (id) DO UPDATE SET text=$4,d_persona=$12,d_buying_stage=$13,
-               d_emotional_driver=$14,d_evidence_type=$15,d_credibility=$16,d_recency=$17,embedding=$18`,
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             ON CONFLICT (id) DO UPDATE SET text=$4,timestamp_url=$10,d_persona=$13,d_buying_stage=$14,
+               d_emotional_driver=$15,d_evidence_type=$16,d_credibility=$17,d_recency=$18,embedding=$19`,
             [a.id, sourceId, collectionId, a.text,
              a.atomIndex||0, a.atomType||'general', a.confidence||1.0,
-             a.startTime||0, a.endTime||0, a.pageNumber||0, a.speaker||null,
+             a.startTime||0, a.endTime||0, a.timestampUrl||'', a.pageNumber||0, a.speaker||null,
              a.d_persona||'', a.d_buying_stage||'', a.d_emotional_driver||'',
              a.d_evidence_type||'', a.d_credibility||3, a.d_recency||'',
              a.embedding ? JSON.stringify(a.embedding) : null]
